@@ -1,0 +1,385 @@
+---
+title: "DNA Methylation HUVEC"
+author: "Lukas Tombor"
+date: "6 Dezember 2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Relevant plot is in last chunk
+Grouping may take longer time (large for loop) - to bypass this please load DNA_Methylation_Groups_new.Rds
+
+
+### Load Packages
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(reshape2)
+```
+
+### Load Data
+```{r}
+Control.vs.Diff <- read.csv("/media/ATLAS_NGS_storage/Lukas/Publication_Data_Dec_2019/DNA Methylation/Batch Korrektion/rnbeads_exp1/differential_methylation_data/diffMethTable_region_cmp1_genes.csv")
+
+Control.vs.Reversible <- read.csv("/media/ATLAS_NGS_storage/Lukas/Publication_Data_Dec_2019/DNA Methylation/Batch Korrektion/rnbeads_exp1/differential_methylation_data/diffMethTable_region_cmp2_genes.csv")
+
+Diff.vs.Reversible <- read.csv("//media/ATLAS_NGS_storage/Lukas/Publication_Data_Dec_2019/DNA Methylation/Batch Korrektion/rnbeads_exp1/differential_methylation_data/diffMethTable_region_cmp3_genes.csv")
+```
+
+### Data analysis
+
+Filter genes which are differential methylated between 3 Comparisons
+
+```{r}
+Control.vs.Diff.filtered <- Control.vs.Diff %>% filter(combinedRank <= 1745)
+Control.vs.Reversible.filtered <- Control.vs.Reversible %>% filter(combinedRank<= 1273)
+Diff.vs.Reversible.filtered <- Diff.vs.Reversible %>% filter(combinedRank<= 2329)
+
+Control.vs.Diff.genes <- as.character(Control.vs.Diff.filtered$id)
+Control.vs.Reversible.genes <- as.character(Control.vs.Reversible.filtered$id)
+Diff.vs.Reversible.genes <- as.character(Diff.vs.Reversible.filtered$id)
+
+df <- full_join(Control.vs.Diff[, c("id", "symbol", "mean.mean.Control", "mean.mean.Differentiated")], Control.vs.Reversible[, c("id", "symbol", "mean.mean.Reversible")], by = c("id", "symbol"))
+
+df$Cont.vs.Diff <- ifelse(df$id %in% Control.vs.Diff.genes, ifelse(df$mean.mean.Control < df$mean.mean.Differentiated, "sig up", "sig down"), "n.s.")
+
+df$Diff.vs.Reversible <- ifelse(df$id %in% Diff.vs.Reversible.genes, ifelse(df$mean.mean.Differentiated < df$mean.mean.Reversible, "sig up", "sig down"), "n.s.")
+
+df$Cont.vs.Reversible <- ifelse(df$id %in% Control.vs.Reversible.genes, ifelse(df$mean.mean.Control < df$mean.mean.Reversible, "sig up", "sig down"), "n.s.")
+
+Group = NULL
+for(i in rownames(df)){
+  if(df[i, "Cont.vs.Diff"] == "n.s." & df[i, "Diff.vs.Reversible"] == "n.s." & df[i, "Cont.vs.Reversible"] == "n.s.")
+  {Group[i] = "0"}
+  else if(df[i, "Cont.vs.Diff"] == "sig up" & df[i, "Diff.vs.Reversible"] == "n.s." & df[i, "Cont.vs.Reversible"] == "sig up")
+  {Group[i] = "1"}
+  else if(df[i, "Cont.vs.Diff"] == "sig down" & df[i, "Diff.vs.Reversible"] == "n.s." & df[i, "Cont.vs.Reversible"] == "sig down")
+  {Group[i] = "2"}
+  else if(df[i, "Cont.vs.Diff"] == "n.s." & df[i, "Diff.vs.Reversible"] == "sig up" & df[i, "Cont.vs.Reversible"] == "n.s.")
+  {Group[i] = "3"}
+  else if(df[i, "Cont.vs.Diff"] == "n.s." & df[i, "Diff.vs.Reversible"] == "sig down" & df[i, "Cont.vs.Reversible"] == "n.s.")
+  {Group[i] = "4"}
+  else if(df[i, "Cont.vs.Diff"] == "sig up" & df[i, "Diff.vs.Reversible"] == "sig down" & df[i, "Cont.vs.Reversible"] == "n.s.")
+  {Group[i] = "5"}
+  else if(df[i, "Cont.vs.Diff"] == "sig down" & df[i, "Diff.vs.Reversible"] == "sig up" & df[i, "Cont.vs.Reversible"] == "n.s.")
+  {Group[i] = "6"}
+  else if(df[i, "Cont.vs.Diff"] == "sig up" & df[i, "Diff.vs.Reversible"] == "sig down" & df[i, "Cont.vs.Reversible"] == "sig up")
+  {Group[i] = "7"}
+  else if(df[i, "Cont.vs.Diff"] == "sig down" & df[i, "Diff.vs.Reversible"] == "sig up" & df[i, "Cont.vs.Reversible"] == "sig down")
+  {Group[i] = "8"}
+  else if(df[i, "Cont.vs.Diff"] == "sig up" & df[i, "Diff.vs.Reversible"] == "n.s." & df[i, "Cont.vs.Reversible"] == "n.s.")
+  {Group[i] = "9"}
+    else if(df[i, "Cont.vs.Diff"] == "sig down" & df[i, "Diff.vs.Reversible"] == "n.s." & df[i, "Cont.vs.Reversible"] == "n.s.")
+  {Group[i] = "10"}
+  else{Group[i] = "11"}
+}
+
+df$Group <- factor(Group, levels = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"))
+
+
+save(df, file = "DNA_Methylation_Groups_new.Rds")
+```
+### Plot different kinetics
+
+```{r}
+df$Cont.vs.Diff <- factor(df$Cont.vs.Diff)
+df$Diff.vs.Reversible <- factor(df$Diff.vs.Reversible)
+df$Cont.vs.Reversible <- factor(df$Cont.vs.Reversible)
+
+df.count <- df %>% group_by(Group) %>% tally() %>% mutate(Freq = round(100*(n/sum(n)), 2))
+
+df <- unique(df)
+melt.df <- melt(df, id.vars = c("id", "symbol", "Cont.vs.Diff", "Diff.vs.Reversible", "Cont.vs.Reversible", "Group"), variable.name = "Treatment", value.name = "Mean_Methylation")
+
+melt.df <- filter(melt.df, id %in% c("ENSG00000227232", "ENSG00000178917", "ENSG00000207654", 
+                                     "ENSG00000209482", "ENSG00000233521", "ENSG00000234711", "ENSG00000132855", "ENSG00000222472", "ENSG00000211575", "ENSG00000131238"))
+ggplot(data = subset(melt.df, Group == "0"), aes(x = Treatment, y = Mean_Methylation))+
+  geom_point()+
+  geom_line(aes(group = id), color = "grey")+
+  scale_x_discrete(labels = c("Cont.", "DM + T", "Reversible"))+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(0.1, 0.2))+
+  labs(y = "Mean Methylation", title = "Example: WASH7P n = 2929 (8.91%)")
+
+ggplot(data = subset(melt.df, Group == "1"), aes(x = Treatment, y = Mean_Methylation))+
+  geom_point()+
+  geom_line(aes(group = id), color = "grey")+
+  scale_x_discrete(labels = c("Cont.", "DM + T", "Reversible"))+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(0, 0.1))+
+  labs(y = "Mean Methylation", title = "Example: ZNF852 n = 36 (0.11%)")
+
+ggplot(data = subset(melt.df, Group == "2"), aes(x = Treatment, y = Mean_Methylation))+
+  geom_point()+
+  geom_line(aes(group = id), color = "grey")+
+  scale_x_discrete(labels = c("Cont.", "DM + T", "Reversible"))+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(0.8, 0.9))+
+  labs(y = "Mean Methylation", title = "Example: MIR128-1 n = 3 (0.01%)")
+
+ggplot(data = subset(melt.df, Group == "3"), aes(x = Treatment, y = Mean_Methylation))+
+  geom_point()+
+  geom_line(aes(group = id), color = "grey")+
+  scale_x_discrete(labels = c("Cont.", "DM + T", "Reversible"))+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(0.9, 1))+
+  labs(y = "Mean Methylation", title = "Example: SNORD83A n = 3 (0.01%)")
+
+ggplot(data = subset(melt.df, Group == "4"), aes(x = Treatment, y = Mean_Methylation))+
+  geom_point()+
+  geom_line(aes(group = id), color = "grey")+
+  scale_x_discrete(labels = c("Cont.", "DM + T", "Reversible"))+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(0,0.1))+
+  labs(y = "Mean Methylation", title = "Example: LINC01638 n = 2 (0.01%)")
+
+ggplot(data = subset(melt.df, Group == "5"), aes(x = Treatment, y = Mean_Methylation))+
+  geom_point()+
+  geom_line(aes(group = id), color = "grey")+
+  scale_x_discrete(labels = c("Cont.", "DM + T", "Reversible"))+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(0.65,0.75))+
+  labs(y = "Mean Methylation", title = "Example: TUBB8P11 n = 23563 (71.66%)")
+
+ggplot(data = subset(melt.df, Group == "6"), aes(x = Treatment, y = Mean_Methylation))+
+  geom_point()+
+  geom_line(aes(group = id), color = "grey")+
+  scale_x_discrete(labels = c("Cont.", "DM + T", "Reversible"))+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(0.72,0.82))+
+  labs(y = "Mean Methylation", title = "Example: ANGPTL3 n = 219 (0.67%)")
+
+ggplot(data = subset(melt.df, Group == "7"), aes(x = Treatment, y = Mean_Methylation))+
+  geom_point()+
+  geom_line(aes(group = id), color = "grey")+
+  scale_x_discrete(labels = c("Cont.", "DM + T", "Reversible"))+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(0.85,0.95))+
+  labs(y = "Mean Methylation", title = "Example: RN7SKP7 n = 4 (0.01%)")
+
+ggplot(data = subset(melt.df, Group == "10"), aes(x = Treatment, y = Mean_Methylation))+
+  geom_point()+
+  geom_line(aes(group = id), color = "grey")+
+  scale_x_discrete(labels = c("Cont.", "DM + T", "Reversible"))+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(0.45,0.55))+
+  labs(y = "Mean Methylation", title = "Example: PPT1 n = 5144 (15.64%)")
+
+ggplot(data = subset(melt.df, Group == "9"), aes(x = Treatment, y = Mean_Methylation))+
+  geom_point()+
+  geom_line(aes(group = id), color = "grey")+
+  scale_x_discrete(labels = c("Cont.", "DM + T", "Reversible"))+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(0,0.1))+
+  labs(y = "Mean Methylation", title = "Example: MIR760 n = 979 (2.98%)")
+```
+
+
+Combine with RNA expression (bulk sequencing) 
+```{r}
+bulk <- read.csv("/media/ATLAS_NGS_storage/Lukas/RNA-SEQ-HUVEC-TCF15_KD/cuffdiff/Gene_expression_Control_FM_vs_Control_DM.tsv", sep = "\t", dec = ",")
+
+df$in.bulk <- ifelse(df$id %in% bulk$gene_id, "yes", "no")
+
+ggplot(df, aes(x = in.bulk))+
+  geom_bar(color = "black")+
+  labs(y = "Number of Genes", x = "Same ENSG Number in DNA Methylation and bulk-Seq", title = "How many overlaps between DNA Methylation data and bulk Sequencing?")+
+  theme_classic2()
+
+regulation <- NULL
+Gene.bulk.anno <- NULL
+
+for(i in rownames(df)){
+  Number <- as.character(df[i, "id"])
+  if(Number %in% bulk$gene_id){
+    X <- filter(bulk, gene_id == Number)
+    Gene.bulk.anno[i] <- as.character(X$gene_short_name)
+    if(X$significant_Control_DM.Control_FM == "yes" & X$Mean_Control_FM > X$Mean_Control_DM){
+      regulation[i] = "sig down"
+    }
+    else if(X$significant_Control_DM.Control_FM == "yes" & X$Mean_Control_FM < X$Mean_Control_DM){
+      regulation[i] = "sig up"
+    }
+    else if(X$significant_Control_DM.Control_FM == "no"){
+      regulation[i] = "n.s."
+    }
+  }
+  else{Gene.bulk.anno[i] <- NA
+       regulation[i] <- NA}
+  
+  if(as.numeric(i)%% 1000 == 0){
+    print(paste(i, "from", length(rownames(df))))
+  }
+}
+
+
+df$Regulation.bulk <- factor(regulation, levels = c("sig up", "sig down", "n.s."))
+
+df$Gene.in.bulk <- Gene.bulk.anno
+
+df$Symbol_ident <- ifelse(is.na(df$symbol), "NA", ifelse(as.character(df$symbol) == as.character(df$Gene.in.bulk), "ident", "not ident"))
+
+```
+
+
+Start from here when loading object
+
+```{r}
+load("/media/ATLAS_NGS_storage/Lukas/Publication_Data_Dec_2019/R-objects/DNA_Methylation_Groups_new.Rds")
+
+df.NA.omit <- na.omit(df[, -2])
+
+df.sum.bulk <- df.NA.omit %>% group_by(Group, Regulation.bulk) %>% tally() %>% mutate(freq = n/sum(n)) %>% complete(Regulation.bulk, fill = list(n = 0, freq = 0))
+
+
+# How many genes of different Groups are differential regulated
+
+ggplot(df.sum.bulk, aes(x = Regulation.bulk, y = freq, fill = Group))+
+  geom_col(color = "black")+
+  facet_wrap(~Group)+
+  scale_y_continuous(labels = scales::percent_format())+
+  labs(title = "Regulation in Bulk-Sequencing FM vs. DM", y = "% of total genes per Group", x = "Significance levels in bulk-RNA Seq")+
+  theme(legend.position = "none")
+
+df.sum.bulk <- df.NA.omit %>% group_by(Group, Regulation.bulk) %>% tally() %>% mutate(freq = n/sum(n)) %>% complete(Regulation.bulk, fill = list(n = 0, freq = 0))
+
+  
+# Examples 
+
+GOI <- c("CNN1", "TGFBR2", "TGFB2", "TAGLN", "CTGF", "COL4A1", "COL1A1", "VWF", "FABP5", "BMP4", 
+         "PDGFRA", "FBLN5", "KDR", "ZEB2")
+
+melt.df <- melt(df, id.vars = c("id","symbol","Gene.in.bulk", "Cont.vs.Diff", "Diff.vs.Reversible", "Cont.vs.Reversible", "Group", "in.bulk", "Regulation.bulk", "Symbol_ident"), variable.name = "Treatment", value.name = "Mean_Methylation")
+
+for(i in GOI){
+  X <- filter(melt.df, Gene.in.bulk == i)
+  m <- mean(X$Mean_Methylation)
+  start <- m - 0.05
+  stop <- m + 0.05
+  p1 <- ggplot(X, aes(x = Treatment, y = Mean_Methylation))+
+    geom_point()+
+    geom_line(aes(group = id), color = "grey")+
+  scale_x_discrete(labels = c("Cont.", "DM + T", "Reversible"))+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(start, stop))+
+  labs(y = "Mean Methylation", title = paste(i, "DNA Methylation"))
+  
+  Y <- filter(bulk[, 1:17], gene_short_name == i)
+  Y.melt <- melt(Y, id.vars = c("gene_id", "gene_short_name", "locus", "strand", "gene_biotype"), variable.name = "Sample")
+  Y.melt <- filter(Y.melt, Sample %in% c("Control_FM_0", "Control_FM_1", "Control_FM_2", "Control_DM_0", "Control_DM_1", "Control_DM_2"))
+  
+  Y.melt$Group <- ifelse(Y.melt$Sample %in% c("Control_FM_0", "Control_FM_1", "Control_FM_2"), "FM", "DM")
+  Y.melt$Group <- factor(Y.melt$Group, levels = c("FM", "DM"))
+  p2 <- ggplot(Y.melt, aes(x = Group, y = value, fill = Group))+
+    stat_boxplot(geom = "errorbar", width = .1)+
+    geom_boxplot(width = .4)+
+    geom_jitter(height = 0, width = .2)+
+    theme(legend.position = "none")+
+    scale_fill_manual(values = c("grey80", "#6e140d"))+
+    labs(y = "FPKM", title = paste(i, "Bulk-RNA-Seq"))
+  
+  svg(filename = paste0("DNA_Methylation_and_bulk_", i, ".svg"), width = 6, height = 4)
+  print(ggarrange(p1, p2, ncol = 2))
+  Sys.sleep(.5)
+  dev.off()
+}
+```
+
+
+```{r}
+melt.df <- melt(df, id.vars = c("id","symbol","Gene.in.bulk", "Cont.vs.Diff", "Diff.vs.Reversible", "Cont.vs.Reversible", "Group", "in.bulk", "Regulation.bulk", "Symbol_ident"), variable.name = "Treatment", value.name = "Mean_Methylation")
+
+melt.df <- melt.df %>% group_by(id) %>% mutate(Norm.mean = Mean_Methylation/Mean_Methylation[Treatment == "mean.mean.Control"])
+
+ggplot(subset(melt.df, Group %in% c("5")), aes(x = Treatment, y = Norm.mean, group = id))+
+  geom_line(color = "grey80")+
+  labs(y = "Mean Methylation of Gene Promoter Sites\n(in fold to Control)", title = "Group 5 + 7 (1.07%)")
+
+ggplot(subset(melt.df, Group == "6"), aes(x = Treatment, y = Norm.mean, group = id))+
+  geom_line(color = "grey80")+
+  labs(y = "Mean Methylation of Gene Promoter Sites\n(in fold to Control)", title = "Group 6 (0.04%)")
+
+ggplot(subset(melt.df, Group == "0"), aes(x = Treatment, y = Norm.mean, group = id))+
+  geom_line(color = "grey80")+
+  labs(y = "Mean Methylation of Gene Promoter Sites\n(in fold to Control)", title = "Group 0 (97%)")
+
+df.NA.omit$sig.change.at.all <- ifelse(df.NA.omit$Group == "0", "no", "yes")
+
+df.count.sig <- df.NA.omit %>% group_by(sig.change.at.all, Regulation.bulk) %>% tally() %>% mutate(Freq = n/sum(n))
+
+ggplot(df.count.sig, aes(x = factor(1), y = Freq, fill = sig.change.at.all))+
+  geom_col(color = "black", position = "identity")+
+  coord_polar("y", start = 0)+
+  scale_y_continuous(labels = scales::percent_format())+
+  scale_fill_manual(values = c("grey", "darkred"))
+
+```
+
+```{r}
+GOI <- c("CNN1", "TGFBR2", "TGFB2", "TAGLN", "CTGF", "COL4A1", "COL1A1", "FABP5", "BMP4", 
+         "PDGFRA", "FBLN5", "SERPINE1", "LOXL1", "ICAM5", "COL3A1", "GJA5", "MMP2", "PDGFA", "GJA1", "COL5A1", "COL1A1")
+
+
+Group.5.genes <- melt.df %>% filter(Group == "5", Treatment == "mean.mean.Differentiated") %>% arrange(Norm.mean) 
+
+Group.5.genes <- Group.5.genes %>% ungroup() %>% top_n(wt = Norm.mean, n = 30)
+
+Group.5.genes <- unique(Group.5.genes$Gene.in.bulk)
+
+Group.6.genes <- melt.df %>% ungroup() %>% filter(Group == "6", Treatment == "mean.mean.Differentiated") %>% arrange(Norm.mean) 
+
+Group.6.genes <- unique(Group.6.genes$Gene.in.bulk)
+
+Group.7.genes <- melt.df %>% ungroup() %>% filter(Group == "7", Treatment == "mean.mean.Differentiated") %>% arrange(Norm.mean) %>% top_n(n = 30, Norm.mean)
+
+Group.7.genes <- unique(Group.7.genes$Gene.in.bulk)
+
+Genes <- c(Group.5.genes, Group.6.genes, Group.7.genes, GOI)
+
+melt.df.subset <- melt.df %>% ungroup %>% filter(Gene.in.bulk %in% Genes)
+
+melt.df.subset <- na.omit(melt.df.subset)
+
+melt.df.subset$Heat <- ifelse(melt.df.subset$Gene.in.bulk %in% Group.5.genes, "A", 
+                              ifelse(melt.df.subset$Gene.in.bulk %in% Group.6.genes, "B", 
+                              ifelse(melt.df.subset$Gene.in.bulk %in% Group.7.genes, "C", "EndMA")))
+melt.df.subset <- arrange(melt.df.subset, -Norm.mean)
+new.order <- as.character(melt.df.subset$Gene.in.bulk)
+
+melt.df.subset$Gene.in.bulk <- factor(melt.df.subset$Gene.in.bulk, levels = unique(new.order))
+
+melt.df.subset$Treatment <- factor(melt.df.subset$Treatment, levels = rev(c("mean.mean.Control", "mean.mean.Differentiated", "mean.mean.Reversible")))
+
+ggplot(melt.df.subset, aes(x = Gene.in.bulk, y = Treatment, fill = Norm.mean))+
+  geom_tile()+
+  scale_fill_distiller(type = "div", palette = 5)+
+  facet_grid(~Heat, scales = "free")+
+  theme(legend.position = "right", axis.text.x = element_text(angle = 90))
+
+
+```
+
+
+```{r}
+
+GOI <- c("PTPRC", "COL4A1", "CNN1", "TAGLN", "NOS3", "KDR")
+melt.df <- na.omit(melt.df)
+melt.df <- filter(melt.df, Treatment %in% c("mean.mean.Control", "mean.mean.Differentiated", "mean.mean.Reversible"))
+melt.df$Mean_Methylation <- as.numeric(melt.df$Mean_Methylation)
+X <- melt.df %>% filter(Gene.in.bulk %in% GOI)
+
+X$Gene.in.bulk <- factor(X$Gene.in.bulk, levels = GOI)
+
+ggplot(X, aes(x=Gene.in.bulk, y = Mean_Methylation, fill = Treatment))+
+  geom_col(color = "black", position = "dodge")+
+  scale_fill_manual(values = c("grey80", "grey50", "grey30"))+
+  scale_y_continuous(breaks = c(0, 0.3, 0.6))+
+  labs(y = "Mean Methylation across sites", x = "Gene")+
+  theme(legend.position = "bottom")
+  
+  
+```
+
