@@ -1,0 +1,126 @@
+# Vizualisation Galunisertib
+
+```{r}
+library(outliers)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(reshape2)
+
+SEM<- function(x){
+  return(sd(x)/sqrt(length(x)))
+}
+
+G <- read.csv("/media/ATLAS_NGS_storage/Lukas/Publication_Data_Dec_2019/Quantification stainings/LT_20_011 + LT_20_015 Counting Confetti Area Quantification_Aug.csv")
+
+G$RED_analysis <- ifelse(G$Rel_Red > G$Mean_Rel_Red & G$Area_Red == "border: > 2 x SD difference to mean", "up", 
+                         ifelse(G$Rel_Red < G$Mean_Rel_Red & G$Area_Red == "border: > 2 x SD difference to mean", "down", "none"))
+
+G$YELLOW_analysis <- ifelse(G$Rel_Yellow > G$Mean_Rel_Yellow & G$Area_Yellow == "border: > 2 x SD difference to mean", "up", 
+                         ifelse(G$Rel_Yellow < G$Mean_Rel_Yellow & G$Area_Yellow == "border: > 2 x SD difference to mean", "down", "none"))
+
+G$GREEN_analysis <- ifelse(G$Rel_Green > G$Mean_Rel_Green & G$Area_Green == "border: > 2 x SD difference to mean", "up", 
+                         ifelse(G$Rel_Green < G$Mean_Rel_Green & G$Area_Green == "border: > 2 x SD difference to mean", "down", "none"))
+
+G.melt <- melt(G,id.vars = 1:32)
+
+G.melt <- filter(G.melt, Border.Remote != "remote")
+
+G.melt$value <- factor(G.melt$value, levels = c("none", "up", "down"))
+
+G.sum <- G.melt %>% 
+  group_by(Animal, Treatment, Cohort, variable, value) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%
+  tidyr::complete(Animal, variable, value, fill = list(count=0)) %>% fill(Treatment, Cohort)
+
+G.sum <- G.sum %>% filter(value != "none")
+
+G..sum <- G.sum %>% group_by(Animal, Treatment, Cohort) %>% summarize (Sig.areas = sum(count))
+
+## Check if 1176 is outlier
+library(outliers)
+
+grubbs.test(G..sum %>% filter(Treatment == "Galunisertib") %>% pull(Sig.areas), 10)
+grubbs.test(G..sum %>% filter(Treatment == "Placebo") %>% pull(Sig.areas), 10)
+grubbs.test(G..sum %>% pull(Sig.areas), 10)
+
+# Remove animal 1176 from analysis
+
+G..sum <- G..sum %>% filter(Animal != "1176")
+
+# Test for significance 
+
+n_Galu <- nrow(subset(G.melt, Treatment == "Galunisertib" & Animal != "1176"))
+n_Plac <- nrow(subset(G.melt, Treatment == "Placebo"))
+
+t.test(data = G..sum, Sig.areas ~ Treatment) 
+
+G.ultra.sum <- G..sum %>% group_by(Treatment) %>% summarize(Mean = mean(Sig.areas),SEM= SEM(Sig.areas), n_sig = sum(Sig.areas))
+
+G.ultra.sum <- data.frame(G.ultra.sum, n_total = c(n_Galu, n_Plac))
+
+G.ultra.sum$not_sig <- G.ultra.sum$n_total - G.ultra.sum$n_sig
+
+cont.table <- matrix(c(G.ultra.sum$n_sig, G.ultra.sum$not_sig), 2,2)
+dimnames(cont.table) <- list(c(as.character(G.ultra.sum$Treatment)), c("significant", "non-significant"))
+fisher.test(cont.table)
+
+kruskal.test(data = G..sum, Sig.areas ~ Treatment)
+
+G.melt$sig <- ifelse(G.melt$value != "none", "sig", "none")
+
+G.melt$sig <- factor(G.melt$sig, levels = c("none", "sig"))
+
+G.count <- G.melt %>% 
+  group_by(Animal, Treatment, Cohort, sig) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%
+  tidyr::complete(Animal, sig, fill = list(count=0)) %>% fill(Treatment, Cohort) %>%
+  group_by(Animal, Treatment, Cohort) %>% mutate(freq = count/sum(count))
+
+G.count <- G.count %>% filter(sig != "none", Animal != "1176")
+G.count.sum <- G.count %>% group_by(Treatment) %>% summarize(Mean = mean(freq), SEM = SEM(freq))
+
+kruskal.test(data = G.count, freq ~ Treatment)
+
+ggplot(G.count, aes(x = Treatment))+
+  geom_col(data = G.count.sum, aes(x = Treatment, y = Mean, fill = Treatment), position = position_dodge(width = .9), color = "black")+
+  geom_errorbar(data = G.count.sum, aes(ymin= Mean-SEM, ymax = Mean+SEM), position = position_dodge(width = .9), width = .3)+
+  geom_jitter(aes(y = freq), width = .3, height = 0, pch= 21, size = 5)+
+  theme_classic()+
+  theme(axis.text = element_text(size = 15, color = "black"), axis.title = element_text(size = 15, color = "black"), legend.position = "bottom")+
+  scale_fill_manual(values = c("#e3c7a6", "grey90"))+
+  scale_y_continuous(labels = scales::percent_format())+
+  labs(y = "% clonal expanded areas")
+
+ggplot(G..sum, aes(x = Treatment))+
+  geom_col(data = G.ultra.sum, aes(x = Treatment, y = Mean, fill = Treatment), position = position_dodge(width = .9), color = "black")+
+  geom_errorbar(data = G.ultra.sum, aes(ymin= Mean-SEM, ymax = Mean+SEM), position = position_dodge(width = .9), width = .3)+
+  geom_jitter(aes(y = Sig.areas), width = .3, height = 0, pch= 21, size = 5)+
+  theme_classic()+
+  theme(axis.text = element_text(size = 15, color = "black"), axis.title = element_text(size = 15, color = "black"), legend.position = "bottom")+
+  scale_fill_manual(values = c("#e3c7a6", "grey90"))+
+  labs(y = "number of clonal expanded areas")
+
+G.color <- G.melt %>% 
+  group_by(Animal, Treatment, Cohort, variable, sig) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%
+  tidyr::complete(Animal, variable, sig, fill = list(count=0)) %>% fill(Treatment, Cohort)
+  
+G.color <- filter(G.color, sig != "none")
+
+G.color.sum <- G.color %>% group_by(Treatment, variable) %>% summarize(Mean = mean(count), SEM = SEM(count))
+
+ggplot(G.color, aes(x = Treatment))+
+  geom_col(data = G.color.sum, aes(x = Treatment, y = Mean, fill = Treatment), position = position_dodge(width = .9), color = "black")+
+  geom_errorbar(data = G.color.sum, aes(ymin= Mean-SEM, ymax = Mean+SEM), position = position_dodge(width = .9), width = .3)+
+  geom_jitter(aes(y = count), width = .3, height = 0, pch= 21, size = 5)+
+  facet_wrap(~variable, nrow = 1)+
+  theme_classic()+
+  theme(axis.text = element_text(size = 15, color = "black"), axis.title = element_text(size = 15, color = "black"), legend.position = "bottom")+
+  scale_fill_manual(values = c("#e3c7a6", "grey90"))+
+  labs(y = "number of clonal expanded areas")
+```
+
