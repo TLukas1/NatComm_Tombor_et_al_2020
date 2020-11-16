@@ -1,0 +1,124 @@
+---
+title: "FSP1 IB4 stainings quantification"
+author: "Lukas Tombor"
+date: "19 Dezember 2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Load packages and raw data
+```{r}
+library(dplyr)
+library(readr)
+library(tidyr)
+#library(outliers)
+
+
+SEM<- function(x){
+  return(sd(x)/sqrt(length(x)))
+}
+
+IB4_FSP1_Stainings <- read_csv("/media/Helios_LukasT/FSP1_Pdgfra/Analysis Velocity/IB4_FSP1_Stainings.csv")
+
+IB4_FSP1_Stainings$Animal <- factor(IB4_FSP1_Stainings$Animal, levels = c(
+  "Hom_2", "Hom_4", "Hom_5", "Hom_7", "Hom_8", "Hom_9", "323", "324", "325", "326", "327", "328", "1043", "1045", "1042", "1047", "1048", "1049", "1050"))
+
+IB4_FSP1_Stainings$AMI <- factor(IB4_FSP1_Stainings$AMI, levels = c("Hom", "d3", "d14"))
+
+IB4_FSP1_Stainings$Region <- factor(IB4_FSP1_Stainings$Region, levels = c("remote", "border"))
+
+
+```
+
+Calculate the Intersection / IB4 area
+```{r}
+IB4 <- IB4_FSP1_Stainings %>% mutate(Freq = `Intersect Area`/`Area IB4 (µm3)`)
+
+IB4 <- IB4 %>% group_by(Animal, Region) %>% mutate(Mean = mean(Freq), SEM = SEM(Freq))
+
+IB4 <- IB4 %>% group_by(Animal) %>% mutate(Norm.remote = Freq/Mean[Region == "remote"])
+
+IB4 <- IB4 %>% group_by(Animal, Region) %>% mutate(Norm.mean = mean(Norm.remote), SEM.norm = SEM(Norm.remote))
+
+IB4 <- IB4 %>% group_by(AMI, Region) %>% mutate(Mean.Timepoint = mean(Mean))
+
+IB4 <- IB4 %>% group_by(AMI, Region) %>% mutate(Mean.Timepoint.Freq = mean(Freq), SEM.Timepoint.Freq = SEM(Freq))
+
+IB4.sum <- IB4 %>% group_by(AMI, Region, Animal, Freq) %>% summarise()
+
+
+write.csv(IB4.sum, "IB4_april2020.csv")
+
+ggplot(IB4.sum, aes(x = AMI, y = Mean.Timepoint, fill = Region))+
+  geom_col(color = "black", position = position_dodge(width = .9))+
+  geom_errorbar(aes(ymin = Mean.Timepoint - SEM.Timepoint, ymax = Mean.Timepoint + SEM.Timepoint), position = position_dodge(width = .9), width = .1)
+
+
+ggplot(IB4.sum, aes(x = AMI, y = Freq, color = Animal))+
+  geom_jitter(width = .2)+
+  facet_grid(~Region, scales = "free_x")+
+  labs(y = "Intersected volume / total IB4 volume", title = "Individual images")
+
+IB4.sum <- IB4 %>% group_by(AMI, Region, Animal, Mean, Mean.Timepoint) %>% summarise()
+
+IB4.sum <- IB4.sum %>% group_by(AMI, Region) %>% mutate(SEM.Timepoint = SEM(Mean))
+
+ggplot(IB4.sum, aes(x = AMI, y = Mean.Timepoint, fill = AMI))+    
+  geom_col(color = "black", position=position_dodge(width=0.4))+
+    geom_errorbar(
+        aes(ymin = Mean.Timepoint-SEM.Timepoint, ymax = Mean.Timepoint+SEM.Timepoint),
+        width = 0.1,
+        position=position_dodge(width=0.4))+
+  facet_grid(~Region, scales = "free_x")+
+  labs(y = "FSP1 colocalisation area/total IB4 area")+
+  theme(legend.position = "none")+
+  theme_bw()
+
+# IB4.sum <- IB4 %>% group_by(AMI, Region, Animal, Norm.mean, SEM.norm) %>% summarise()
+# 
+# ggplot(IB4.sum, aes(x = AMI, y = Norm.mean, color = Animal))+    
+#   geom_point(size = 4, position=position_dodge(width=0.2)) +
+#     geom_errorbar(
+#         aes(ymin = Norm.mean-SEM.norm, ymax = Norm.mean+SEM.norm),
+#         width = 0.1,
+#         position=position_dodge(width=0.2)) +
+#   facet_grid(~Region, scales = "free_x")+
+#   labs(y = "Intersected volume / total IB4 volume \n normalized to remote zone", title = "Normalized means per animal to remote Zone")
+
+
+# Statistical Test
+
+d3.means <- IB4.sum %>% filter(AMI == "d3" & Region == "border")
+d3.r.means <- IB4.sum %>% filter(AMI == "d3" & Region == "remote")
+d14.r.means <- IB4.sum %>% filter(AMI == "d14" & Region == "remote")
+d14.means <- IB4.sum %>% filter(AMI == "d14" & Region == "border")
+Hom.means <- IB4.sum %>% filter(AMI == "Hom")
+
+wilcox.test(d3.means$Mean, Hom.means$Mean)
+wilcox.test(d14.means$Mean, Hom.means$Mean)
+wilcox.test(d3.r.means$Mean, d3.means$Mean)
+wilcox.test(d14.r.means$Mean, d14.means$Mean)
+
+
+
+## New Plot layout
+
+IB4.sum <- IB4 %>% group_by(AMI, Region, Animal, Mean, Mean.Timepoint) %>% summarise()
+
+IB4.sum <- IB4.sum %>% group_by(AMI, Region) %>% mutate(SEM.Timepoint = SEM(Mean))
+
+ggplot(IB4.sum, aes(x = AMI, y = Mean, fill = Region))+    
+  stat_summary(geom = "col", color = "black", position=position_dodge(width=0.9), fun = mean)+
+    geom_errorbar(
+        aes(ymin = Mean.Timepoint-SEM.Timepoint, ymax = Mean.Timepoint+SEM.Timepoint),
+        width = 0.1,
+        position=position_dodge(width=0.9))+
+  geom_jitter(position = position_jitterdodge(dodge.width=0.9, jitter.height = 0, jitter.width = .2))+
+  labs(y = "FSP1 colocalisation area/total IB4 area")+
+  scale_fill_manual(values = c("white", "#b4b4b4"))+
+  theme(legend.position = "none")+
+  theme_classic()
+
+```
+
