@@ -1,0 +1,2141 @@
+---
+title: "Tombor_et_al_dataanlysis"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+Load packages
+
+```{r}
+library(reshape2)
+library(ggpubr)
+library(stringr)
+library(tidyr)
+library(dplyr)
+library(hash)
+library(monocle)
+library(scales)
+library(enrichplot)
+library(enrichR)
+library(pheatmap)
+library(clusterProfiler)
+library(msigdbr)
+library(fgsea)
+library(DOSE)
+library(RColorBrewer)
+library(circlize)
+library(viridis)
+library(patchwork)
+library(hrbrthemes)
+library(circlize)
+```
+
+Load Datasets
+
+More information on generating the R-objects (innitial analysis): 
+  Innitial analysis Rosenthal data.R
+  Innitial analysis Tracing data.R
+  Innitial analysis Collagen data.R
+
+```{r message=FALSE, warning=FALSE}
+# Load Rosenthal data (MILENA.filtered)
+
+load("/media/ATLAS_NGS_storage/Lukas/Publication_Data_Dec_2019/R-objects/LukasRosenthal.rds")
+
+# Load Tracing data (Tracing) Cdh5-Tracing
+
+load("/media/ATLAS_NGS_storage/Lukas/Publication_Data_Dec_2019/R-objects/Tracing.Rds")
+
+# orig.ident slot in Tracing is not a factor - change to factor
+anno <- c("Homeostasis", "d1_post", "d3_post", "d5_post", "d7_post", "d14_post", "d28_post")
+annos = c("Hom","d1","d3","d7","d14","d28", "d48", "Tam-Control")
+col = c("#f6e58d", "#ff7979", "#badc58", "#f0932b", "#6ab04c", "#7ed6df", "#686de0")
+Tracing@meta.data$orig.ident <- factor(Tracing@meta.data$orig.ident, levels = annos)
+
+# Load Collagen Tracing
+
+load("/media/ATLAS_NGS_storage/Lukas/Publication_Data_Dec_2019/R-objects/Collagen_July_2020.Rds")
+
+# By Cdh5+ Pecam1+
+EC.R.by.marker <- SubsetData(MILENA.filtered, cells.use = WhichCells(MILENA.filtered, cells.use = which(MILENA.filtered@data["Pecam1", ] != 0 & MILENA.filtered@data["Cdh5", ] !=0)))
+
+EC.R.by.cluster <- SubsetData(MILENA.filtered, cells.use = WhichCells(MILENA.filtered, cells.use = which(MILENA.filtered@meta.data$res.0.6 %in% c("6","7","17","18"))))
+
+## Tracing dataset
+
+# By GFP
+
+GFP <- SubsetData(Tracing, cells.use = WhichCells(Tracing, cells.use = which(Tracing@meta.data$GFP == "GFP.positive" &
+                                                                               Tracing@meta.data$orig.ident != "Tam-Control")))
+
+table(GFP@meta.data$GFP)
+
+# Prepare EndMT subset: 
+Data = MILENA.filtered
+
+A <- data.frame(Pecam1 = Data@data["Pecam1", ],
+                Cdh5 = Data@data["Cdh5", ], 
+                Fn1 = Data@data["Fn1", ],
+                Serpine1 = Data@data["Serpine1", ],
+                ColCell = colnames(Data@data))
+
+EndMT.counter = NULL
+for (i in rownames(A)){
+  if(A[i,"Pecam1"] != 0 & A[i,"Cdh5"] != 0 & A[i,"Fn1"] != 0 & A[i,"Serpine1"] != 0){
+    EndMT.counter[i] = "EndMT+"
+  }
+  else if((A[i,"Pecam1"] != 0 & A[i,"Cdh5"] != 0) & A[i,"Fn1"] == 0){
+    EndMT.counter[i] = "EndMT-"
+  }
+  else if((A[i,"Pecam1"] != 0 & A[i,"Cdh5"] != 0) & A[i,"Serpine1"] == 0){
+    EndMT.counter[i] = "EndMT-"
+  }
+  else {EndMT.counter[i] = "other"}
+}
+
+Data <- AddMetaData(Data, EndMT.counter, "EndMT.counter")
+
+Data <- SetAllIdent(Data, id = "EndMT.counter")
+
+MILENA.filtered <- Data
+```
+
+## This file contains all single-cell analysis used in Tombor et al. 
+
+# Figure 1
+
+# Figure 1a
+
+```{r fig.height=12, fig.width=8}
+MILENA.filtered <- SetAllIdent(MILENA.filtered, id = "res.0.6")
+TSNEPlot(MILENA.filtered)
+```
+
+# Figure 1b
+
+```{r}
+FeaturePlot(object = MILENA.filtered, features.plot = c("Cdh5", "Pecam1"), cols.use = c("lightblue", "brown"), vector.friendly = T, no.legend = F, pt.size = 3)
+```
+
+
+# Figure 1c
+
+```{r}
+A <- MILENA.filtered@meta.data
+Group.cells = NULL
+for (i in rownames(A)){
+  if(A[i,"res.0.6"] %in% c(2,3,12,15)){
+    Group.cells[i] <- "Macrophages/Monocytes"
+  }
+  else if(A[i,"res.0.6"] %in% c(6,7,17,18)){
+    Group.cells[i] <- "Endothelial cells"
+  }
+  else if(A[i,"res.0.6"] %in% c(0,1,4,5,14,8)){
+    Group.cells[i] <- "Fibroblasts"
+  }
+  else if(A[i,"res.0.6"] %in% c(9)){
+    Group.cells[i] <- "B-cells"
+  }
+  else if(A[i,"res.0.6"] %in% c(13)){
+    Group.cells[i] <- "T-cells"
+  }
+  else if(A[i,"res.0.6"] %in% c(11)){
+    Group.cells[i] <- "Dendritic cells"
+  }
+  else if(A[i,"res.0.6"] %in% c(16)){
+    Group.cells[i] <- "Smooth muscle cells"
+  }
+  else{
+    Group.cells[i] <- "Unknown"
+  }
+}
+
+MILENA.filtered <- AddMetaData(MILENA.filtered, metadata = Group.cells, col.name = "Cell.type")
+
+A <- MILENA.filtered@meta.data %>% group_by(Timepoint, Cell.type) %>% tally() %>% mutate(Freq = n/sum(n)) %>% complete(Cell.type, fill = list(n = 0, Freq = 0))
+
+A.sum <- MILENA.filtered@meta.data %>% group_by(Cell.type) %>% tally()
+
+ggplot(A, aes(x = Timepoint, y = Freq, fill = Cell.type))+
+  geom_col(color = "black")+
+  scale_y_continuous(labels = scales::percent_format())+
+  facet_wrap(~Cell.type, scales = "free")
+```
+
+# Figure 1d
+
+```{r}
+Data <- EC.R.by.marker
+Data <- SetAllIdent(Data, "Timepoint")
+
+All.marker <- FindAllMarkers(Data, logfc.threshold = 0.25, test.use = "bimod", return.thresh = 0.01)
+
+All.marker.p <- subset(All.marker, avg_logFC > 0)
+
+list.GO <- list()
+for (i in anno){
+  X <- subset(All.marker.p, cluster == i)
+  GOI <- X$gene
+  results <- enrichr(GOI, databases = c("GO_Biological_Process_2018", "GO_Molecular_Function_2018"))
+  list.GO[[i]] <- results
+}
+All.GO <- NULL
+for(i in anno){
+  tab1 <- data.frame(list.GO[[i]][["GO_Biological_Process_2018"]], i)
+  tab2 <- data.frame(list.GO[[i]][["GO_Molecular_Function_2018"]], i)
+  
+  All.GO <- data.frame(rbind(All.GO, tab1, tab2))
+}
+setwd("/media/Storage/Figures for Manuscript/Excelsheets")
+write.table(All.GO, sep= ";", dec = ".", file = "GO.Terms_all_Timepoints_Rosenthal.csv")
+# Selected GO-Terms
+
+
+Terms <-  c("positive regulation of inflammatory response (GO:0050729)",
+            "cellular response to hypoxia (GO:0071456)",
+            "negative regulation of programmed cell death (GO:0043069)",
+            "positive regulation of angiogenesis (GO:0045766)",
+            "positive regulation of cell proliferation (GO:0008284)",
+            "regulation of mitotic cell cycle phase transition (GO:1901990)",
+            "cellular response to nitric oxide (GO:0071732)",
+            "positive regulation of epithelial to mesenchymal transition (GO:0010718)",
+            "extracellular matrix disassembly (GO:0022617)", 
+            "extracellular matrix organization (GO:0030198)")
+            
+Annotation <- c(1,1,1,2,2,2,2,3,3,3)
+
+GO.plot.data <- All.GO %>% filter(Term %in% Terms) %>% group_by(Term) %>% complete(i, fill = list(rep(NA, 8)))
+val <- str_split(GO.plot.data$Overlap, "/")
+fraction = NULL
+for(i in 1:length(val)){
+  if(is.na(val[[i]])){
+    fraction[i] = NA
+  }
+  else {
+    fraction[i] <- as.numeric(val[[i]][1])/as.numeric(val[[i]][2])
+  }
+}
+GO.plot.data$Fraction <- fraction
+
+GO.plot.data$Term <- factor(GO.plot.data$Term, levels = unique(Terms))
+
+GO.hash <- hash::hash(Terms, Annotation)
+An <- NULL
+for(i in GO.plot.data$Term){
+  An <- c(An, GO.hash[[i]])
+}
+GO.plot.data$Annotation <- An
+
+ggplot(GO.plot.data, aes(x= i, y= Term, color = Combined.Score, size = fraction))+
+  geom_point()+
+  scale_color_gradient(low = "grey80", high = "red", name = "Enrichment Score")+
+  scale_size_continuous(breaks = c(0,0.1,0.15,0.2,0.25,0.3), range = c(1,10), name = "Specificity")+
+  theme(axis.text.x = element_text(angle = 90, face= "bold", vjust = 0.5))+
+  facet_wrap(Annotation~., scales = "free", nrow = 3)+
+  xlab("")+
+  ylab("")
+```
+
+# Figure 1e 
+
+```{r}
+Data = EC.R.by.marker
+Genes <- c("Bax", "Trp53", "Hif1a", "Ldha", "Il1b", "Il6", "Tnf")
+Groups <- c("Apoptosis", "Apoptosis", "Hypoxia", "Hypoxia", "Inflammation", "Inflammation", "Inflammation")
+
+All <- data.frame(Timepoint = Data@meta.data$Timepoint)
+for (g in Genes){
+All <- data.frame(All, expm1(Data@data[g, ]))
+}
+colnames(All) <- c("Timepoint",Genes)
+for (g in Genes){
+All <- All %>% mutate(cut(All[,g], breaks = c(-Inf, 0, Inf), labels = c("0", ">0")))
+colnames(All) <- c(colnames(All)[1:length(colnames(All))-1], paste0(g,"_Counter"))
+}
+
+ggData <- data.frame(Timepoint = factor(anno, levels = anno)) 
+for(g in Genes){
+  x <- paste0(g,"_Counter")
+All.Sum <- All %>% count(Timepoint, Binary = get(x)) %>% group_by(Timepoint) %>% mutate(freq = n /sum(n))
+All.Sum <- All.Sum %>% ungroup() %>% filter(Binary == ">0")
+
+ggData <- data.frame(ggData, All.Sum$freq)
+}
+colnames(ggData) <- c("Timepoint",Genes)
+
+gg.melt <- melt(ggData, id.vars = "Timepoint", variable.name = "Gene", value.name = "Percent.positive")
+ggG <- NULL
+for(G in Groups){
+  ggG <- c(ggG, rep(G, length(Groups)))
+}
+gg.melt$Group <- ggG
+ggplot(gg.melt, aes(x = Gene, y = Percent.positive, fill = Timepoint))+
+  geom_col(width = 0.8, color = "black", position = "dodge")+
+  scale_fill_manual(values = col)+
+  facet_grid(~Group, scales = "free_x", space = "free")+
+  scale_y_continuous(labels = scales::percent_format(), name = "Increase in Gene (in % EC)")+
+    theme(axis.line = element_line(size = 1.5), axis.text.x = element_text(size=22, face = "italic"),
+        axis.text.y = element_text(size=18),
+        axis.title = element_text(size=20), axis.title.x = element_blank(), legend.position = "none")
+
+ggplot(gg.melt, aes(x = Timepoint, y = Percent.positive, fill = Gene, group = Timepoint))+
+  geom_col(width = 0.8, color = "black", position = "stack")+
+  scale_y_continuous(labels = scales::percent_format(), name = "Cummulative \n increase in Gene (in % EC)", limits = c(0,2))+
+  facet_grid(~Group, scales = "free_x", space = "free")+
+    theme(axis.line = element_line(size = 1.5), axis.text.x = element_text(size=12, angle = 45, hjust = 1),
+        axis.text.y = element_text(size=14),
+        axis.title = element_text(size=14), axis.title.x = element_blank(), legend.position = "bottom")
+```
+
+# Figure 1f
+
+```{r}
+df <- data.frame(Timepoint = EC.R.by.marker@meta.data$Timepoint, Cellcy = EC.R.by.marker@meta.data$Phase)
+
+df.sum <- df %>% group_by(Timepoint, Cellcy) %>% tally() %>% mutate(freq = n/sum(n))
+
+ggplot(df.sum, aes(x = Timepoint, y = freq, fill = Cellcy))+
+  geom_col(color = "black", position = "dodge")+
+  scale_y_continuous(labels = scales::percent_format(), breaks = c(0,0.25,0.5,0.75), limits = c(0,0.8))+
+  theme(legend.position = "top")+
+  labs(x = "", y= "% EC", fill = "Cellcycle Phase")
+df.sum <- as.matrix(df.sum)
+cont.table <- matrix(c(as.numeric(df.sum[1:3,"n"]), as.numeric(df.sum[7:9,"n"])), 3,2)
+
+# Test
+chisq.test(cont.table, correct = T)
+```
+
+# Figure 1g
+
+```{r}
+Data = EC.R.by.marker
+Genes = c("Cks2", "Tyms", "Birc5", "Cdc20", "Ccna2", "Cdca8")
+A = data.frame(Timepoint= Data@meta.data$Timepoint)
+for (g in Genes){
+A <- data.frame(A, Data@data[g,])
+}
+colnames(A) <- c("Timepoint", Genes) 
+A <- filter(A, Timepoint %in% c("Homeostasis", "d3_post"))
+B<- subset(A, Timepoint == "Homeostasis")
+
+means.hom <- colMeans(B[2:(length(Genes)+1)])
+
+C= NULL
+for (i in 1:length(colnames(A))){
+  if(i != 1){
+    c = A[,i]/means.hom[i-1]
+    C = data.frame(cbind(C, c))
+    c=NULL
+  }
+}
+
+colnames(C)<- Genes
+C<- data.frame(C, Timepoint= A$Timepoint)
+
+melt.C<- melt(C)
+
+ggplot(melt.C, aes(x = Timepoint, y= value, fill = Timepoint))+
+  stat_mean(geom = "col", color = "black")+
+  coord_cartesian(ylim = c(0,15))+
+  stat_summary(geom= "errorbar", fun.ymin = function(x) mean(x)-SEM(x), 
+               fun.ymax= function(x) mean(x)+SEM(x), width = 0.1)+
+  #scale_fill_manual(values = c(col[1], col[3]))+
+  facet_wrap(~variable, nrow = 3)
+
+# Test if DEG
+Data <- SetAllIdent(Data, id = "Timepoint")
+X <- FindMarkers(Data, ident.1 = "Homeostasis", ident.2 = "d3_post", genes.use = Genes)
+```
+
+# Figure 2a
+
+```{r}
+Data = EC.R.by.marker
+
+Data.Monocle <- importCDS(Data, import_all = F)
+Data.Monocle <- estimateSizeFactors(Data.Monocle)
+Data.Monocle <- estimateDispersions(Data.Monocle)
+print(head(pData(Data.Monocle)))
+Timepoint <- pData(Data.Monocle)$Timepoint
+pData(Data.Monocle)$Timepoint <- factor(Timepoint, levels = anno)
+
+
+disp_table <- dispersionTable(Data.Monocle)
+
+Data.Monocle <- detectGenes(Data.Monocle, min_expr = 0.1)
+expressed_genes <- row.names(subset(fData(Data.Monocle), num_cells_expressed >= 10))
+
+
+diff_test_res <- differentialGeneTest(Data.Monocle[expressed_genes,],
+                                      fullModelFormulaStr = "~Timepoint")
+print(head(diff_test_res))
+
+ordering_genes <- row.names(subset(diff_test_res, qval < 0.01))
+
+print(head(ordering_genes))
+
+Data.Monocle <- setOrderingFilter(Data.Monocle, ordering_genes)
+plot_ordering_genes(Data.Monocle)
+
+Data.Monocle <- reduceDimension(Data.Monocle, max_components = 2,
+                               method = 'DDRTree')
+Data.Monocle <- orderCells(Data.Monocle, reverse = T)
+
+plot_cell_trajectory(Data.Monocle, color_by = "State", show_state_number = F, show_tree = T) + 
+  facet_wrap(~Timepoint,nrow = 1) + 
+  theme(axis.line = element_line(size = 6), axis.text.x = element_text(size=16, face = "italic"),
+                axis.text.y = element_text(size=18),
+                axis.title = element_text(size=18), legend.position = "top", strip.text = element_text(size=18))
+
+States <- Data.Monocle@phenoData@data$State
+names(States) <- rownames(Data.Monocle@phenoData@data)
+
+Data <- AddMetaData(Data, States, "State")
+
+A <- data.frame(Timepoint = Data@meta.data$Timepoint, State = Data@meta.data$State)
+a <- as.numeric(table(A$Timepoint))
+x <- aggregate(A, by = list(A$Timepoint, A$State), FUN = length)
+
+x <- A  %>%
+  count(Timepoint, State) %>% complete(Timepoint, State, fill = list(n = 0))
+
+prop =NULL
+for (j in anno){
+  y <- filter(x, Timepoint == j)
+  s <- sum(y$n)
+  pobs<- c(y$n/s)
+  prop = c(prop, pobs)
+}
+
+x <- data.frame(x, Prop= prop)
+
+ggplot(x, aes(x=factor(1), y= prop, fill = State))+ 
+  geom_bar(color = "black", stat = "identity", width = 1)+
+  coord_polar(theta = "y", clip = "on")+
+  scale_x_discrete(breaks = "", labels = "")+
+  facet_grid(~Timepoint)+
+  theme(axis.text = element_blank(), axis.ticks = element_blank(), panel.grid = element_blank(), axis.title = element_blank())
+
+filter(x, State == 4)
+```
+
+# Figure 2b
+
+```{r}
+Genes = c("Fn1", "Serpine1", "Tgfbr2", "Lyve1", "Cd36", "Fabp4", "Vim", "Dcn", "Bgn", "Col1a1", "Col3a1", "Col1a2", "Plvap",
+          "Birc5", "Cdk1", "Mmp14")
+
+A <- FindAllMarkers(Data, genes.use = Genes, logfc.threshold = 0, min.pct = 0, test.use = "bimod")
+
+A$p_val_adj <- ifelse(A$p_val_adj == 0, 1e-300, A$p_val_adj)
+
+ggplot(A, aes(x=cluster, y= gene, color = avg_logFC, size = -log10(p_val_adj)))+ 
+  geom_point(pch = 19)+ 
+  scale_color_gradient2(low = "blue1", mid = "grey80", high = "red1", name = "ln(Fold change)")+
+  scale_size(name = "log10(p-value)")+ 
+  ggtitle("Marker in States")
+
+EC.R.by.marker <- Data
+```
+
+# Figure 2c
+
+```{r}
+X <- data.frame(State = Data@meta.data$State, Col3a1 = expm1(Data@data["Col3a1", ]), Serpine1 = expm1(Data@data["Serpine1", ]), Cdh5 = expm1(Data@data["Cdh5", ]))
+
+Bin = NULL
+for (i in rownames(X)){
+  if(X[i,"State"] != "4"){Bin[i] <- "other"}
+  else if(X[i,"State"] == 4){Bin[i] <- "4"}
+}
+ X$State <- Bin
+ 
+X.m <- melt(X)
+ggplot(X.m, aes(x= State, y= value, fill = State))+
+  geom_jitter(height = 0, color = "grey80")+
+  geom_violin(scale = "width")+ 
+  facet_wrap(~variable, scales = "free") +
+  scale_y_continuous(name = "normalized UMI counts (log10)", trans = "log1p")+
+  theme(axis.line = element_line(size = 6), axis.text.x = element_text(size=18, face = "bold"),
+                                                 axis.text.y = element_text(size=12),
+                                                 axis.title = element_text(size=16), legend.position = "top", strip.text = element_text(size=18, face = "italic"))+
+  scale_fill_manual(values = c("#00B0F6", "cornsilk"))
+
+# All observations are significant
+Data <- SetAllIdent(Data, id = "State")
+Test <- FindMarkers(Data, genes.use = c("Col3a1", "Serpine1", "Cdh5"), test.use = "bimod", min.pct = 0, logfc.threshold = 0,
+                    ident.1 = "4")
+Test
+```
+
+# Figure 2d
+
+```{r}
+Data = EC.R.by.marker
+Relative.plot <- function(object = Data , Gene = Markers.to.Plot){
+for(i in Gene){
+  if(i %in% rownames(object@data))
+  {print(i)}
+  else {stop(paste0(i, " not found"))}
+}
+
+SEM<- function(x){
+  return(sd(x)/sqrt(length(x)))
+}
+
+A<- data.frame(object@meta.data$Timepoint)
+for (i in Gene){
+  A<- data.frame(A, expm1(object@data[i, ]))
+}
+
+colnames(A) <- c("Timepoint", "Gene")
+
+B<- subset(A, Timepoint == "Homeostasis")
+
+means.hom <- colMeans(B[2:(length(Gene)+1)])
+
+C= NULL
+for (i in 1:length(colnames(A))){
+  if(i != 1){
+    c = A[,i]/means.hom[i-1]
+    C = data.frame(cbind(C, c))
+    c=NULL
+  }
+}
+
+colnames(C)<- Gene
+C<- data.frame(C, Timepoint= A$Timepoint)
+
+melt.C<- melt(C)
+
+ggplot(melt.C, aes(x=factor(Timepoint, levels= rev(anno)), y= value, color= Timepoint))+
+  stat_summary(geom="pointrange", fun.y = "mean", fun.ymin = function(x) mean(x)-SEM(x), 
+               fun.ymax = function(x) mean(x)+SEM(x))+
+  coord_flip()+
+  scale_x_discrete(labels= c("d28", "d14", "d7", "d5", "d3", "d1", "Hom"))+
+  facet_wrap(~variable, scales= "free", nrow = 2)+ 
+  theme_bw(base_family = "")+
+  scale_color_manual(values = col)+
+  ylab("Fold-change to Homeostasis")+
+  geom_hline(yintercept = 1, linetype = "dotted")+
+  theme(legend.position = "none", axis.title.y = element_blank(), strip.text = element_text(face= "italic"), text = element_text(size=15))
+}
+
+####################################################
+Markers.to.Plot <- c("Fn1", "Mmp14", "S100a4", "Vim", "Tnc", "Col1a1", "Col3a1", "Serpine1", "Mmp9", "Snai1")
+Relative.plot()
+```
+
+# Figure 2e
+
+```{r}
+Vali <- read.table("/media/ATLAS_NGS_storage/Lukas/Publication_Data_Dec_2019/Eva-Bulk_sequencing/Analysis AMI 3d ECs.csv", header = T, sep = ";", dec = ",")
+
+rownames(Vali) <- c("Control 1", "Control 2", "Control 3", "Control 4", "d3 AMI 1", "d3 AMI 2", "d3 AMI 3")
+
+Vali <- as.matrix(Vali[1:7, 2:6])
+
+colo <- c("blue", "grey80", "red")
+my_palette <- colorRampPalette(colo)(255)
+
+Pathway <- c("Hom", "Hom", "Hom", "Hom", "d3", "d3", "d3")
+J_dataframe <- data.frame(Sample = Pathway)
+rownames(J_dataframe) <- rownames(Vali)
+
+pheatmap::pheatmap(Vali, scale = "column", cluster_rows = F, cluster_cols = F, 
+                   color = my_palette, na_col = "white", border_color = "white", gaps_row = 4, annotation_row = J_dataframe, 
+                   annotation_colors = list(d3 = col[3], Hom =col[1]))
+```
+
+# Figure 2f
+
+```{r}
+EC.R.by.marker <- SetAllIdent(EC.R.by.marker, id = "Timepoint")
+
+Endothelial.marker <- c("Pecam1", "Cdh5", "Sox17", "Cd93")
+for (i in Endothelial.marker){
+  if(length(EC.R.by.marker@data[i,] == length(rownames(EC.R.by.marker@meta.data)))){print(i)}
+}
+
+FC <- NULL
+p.val <- NULL
+Ti <- NULL
+for (i in 1:length(anno)){
+print(anno[i])
+if(i ==1){
+  p.val <- rep(NA, length(Endothelial.marker))}
+else{
+Tester <- FindMarkers(EC.R.by.marker, genes.use = Endothelial.marker, test.use = "bimod", logfc.threshold = 0, min.pct = 0, return.thresh = 1,ident.2 = "Homeostasis"
+                           ,ident.1 = anno[i])
+Tester <- Tester[Endothelial.marker, ]
+p.val <- cbind(p.val, Tester$p_val_adj)}
+}
+
+G <- NULL
+Means <- NULL
+for (i in anno){
+  for(j in Endothelial.marker){
+x <- mean(expm1(EC.R.by.marker@data[j, WhichCells(EC.R.by.marker, cells.use = which(EC.R.by.marker@meta.data$Timepoint == i))]))
+G <- c(G,x)
+  }
+  Means= cbind(Means, G)
+  G <- NULL
+}
+
+rownames(Means) <- Endothelial.marker
+rownames(p.val) <- Endothelial.marker
+colnames(Means) <- anno
+colnames(p.val) <- anno
+
+Means. <- Means
+for (i in 1:length(p.val)){
+  if(p.val[i] > 0.05 & is.na(p.val[i]) == F){
+    Means[i] <- NA
+  }
+}
+
+colo <- c("blue", "grey80", "red")
+my_palette <- colorRampPalette(colo)(255)
+
+pheatmap::pheatmap(Means, scale = "row", cluster_rows = F, cluster_cols = F, color = my_palette, na_col = "white", border_color = "white")
+
+tMeans.<- t(Means.)
+zMeans.<- scale(tMeans.)
+zMeans. <- t(zMeans.)
+Means.across.Genes <- colMeans(zMeans.)
+SEM.across.Genes <- apply(zMeans.,2,SEM)
+A <- data.frame(Timepoint = factor(anno, levels= anno), Me = Means.across.Genes, Se <- SEM.across.Genes)
+  
+ggplot(A, aes(x = Timepoint, y= Me, fill = Me))+ 
+  geom_col(color = "white")+
+  scale_fill_gradient2(low= "blue", mid= "grey80", high = "red")+
+  geom_errorbar(aes(ymin= Me-Se, ymax=Me+Se), width = 0.1)+
+  scale_y_continuous(name = "Mean z-score", position = "right")+ 
+  theme(legend.position = "none", axis.title.x = element_blank(), axis.text.x = element_blank(), axis.line.x = element_blank(), 
+        axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 10), axis.ticks.x = element_blank())
+
+```
+
+## Figure 2g
+
+```{r}
+B <- data.frame(Pecam1 = expm1(ECs@data["Pecam1", ]), Cdh5 = expm1(ECs@data["Cdh5", ]))
+
+x <- rowMeans(B)
+
+B2 <- data.frame(Fn1 = expm1(ECs@data["Fn1", ], S100a4 = expm1(ECs@data["S100a4", ])))
+
+y <- rowMeans(B2)
+
+C <- data.frame(B,B2, Endo_Mean = x,Mesenchymal_Mean= y, Timepoint = ECs@meta.data$Timepoint)
+
+# Pecam1 against Fn1
+
+bottom_Endo<- as.numeric(median(expm1(ECs@data["Pecam1",which(ECs@data["Pecam1", ] > 0) ])))
+top_Mes<- as.numeric(median(expm1(ECs@data["Fn1",which(ECs@data["Fn1", ] > 0) ])))
+
+Cutter <- NULL
+for(i in rownames(C)){
+  if (C[i,"Pecam1"] < bottom_Endo & C[i,"Fn1"] > top_Mes){
+    Cutter[i] <- "Low Endothelial/High Mesenchymal"
+  }
+  else if (C[i,"Pecam1"] >= bottom_Endo & C[i,"Fn1"] > top_Mes){
+    Cutter[i] <- "High Endothelial/High Mesenchymal"
+  }
+  else if (C[i,"Pecam1"] >= bottom_Endo & C[i,"Fn1"] <= top_Mes){
+    Cutter[i] <- "High Endothelial/Low Mesenchymal"
+  }
+  else if (C[i,"Pecam1"] < bottom_Endo & C[i,"Fn1"] <= top_Mes){
+    Cutter[i] <- "Low Endothelial/Low Mesenchymal"
+  } 
+  else{print("Problem")}
+}
+C <- data.frame(C, Class = Cutter)
+x<- C[ ,c("Class", "Timepoint")]
+
+ax <- aggregate(x, by = list(x$Timepoint), FUN = length)
+bx <- aggregate(x, by = list(x$Timepoint, x$Class), FUN = length)
+bx <- subset(bx, Group.2 == "Low Endothelial/High Mesenchymal")
+a <- ax[,2]
+b <- bx[,3]
+
+
+freq = NULL
+for(i in 1:length(b)){
+  freq[i] <- b[i]/a[i]
+}
+Summary = NULL
+Summary <- cbind(Summary, freq)
+Ramper<- colorRampPalette(c("orange","red"), space = "rgb")
+freq.colors <- Ramper(7)
+
+c <- NULL
+for (i in col){
+c <- c(c, "grey85", "grey85", i, "grey85")
+}
+ggplot(C, aes(x = Pecam1, y=Fn1, color = Timepoint:Class))+
+  geom_point()+
+  scale_color_manual(values = c)+
+  geom_abline(slope = 0, intercept = top_Mes, color = "grey50")+
+  geom_vline(aes(xintercept = bottom_Endo), color = "grey50")+ 
+  xlab("Pecam1")+
+  ylab("Fn1")+
+  facet_grid(~Timepoint, scale= "fixed", space = "free")+
+  theme(legend.position = "none")
+
+# Pecam1 vs. S100a4
+C <- data.frame(B,B2, Endo_Mean = x,Mesenchymal_Mean= y, Timepoint = ECs@meta.data$Timepoint)
+bottom_Endo<- as.numeric(median(expm1(ECs@data["Pecam1",which(ECs@data["Pecam1", ] > 0) ])))
+top_Mes<- as.numeric(median(expm1(ECs@data["S100a4",which(ECs@data["S100a4", ] > 0) ])))
+
+Cutter <- NULL
+for(i in rownames(C)){
+  if (C[i,"Pecam1"] < bottom_Endo & C[i,"S100a4"] > top_Mes){
+    Cutter[i] <- "Low Endothelial/High Mesenchymal"
+  }
+  else if (C[i,"Pecam1"] >= bottom_Endo & C[i,"S100a4"] > top_Mes){
+    Cutter[i] <- "High Endothelial/High Mesenchymal"
+  }
+  else if (C[i,"Pecam1"] >= bottom_Endo & C[i,"S100a4"] <= top_Mes){
+    Cutter[i] <- "High Endothelial/Low Mesenchymal"
+  }
+  else if (C[i,"Pecam1"] < bottom_Endo & C[i,"S100a4"] <= top_Mes){
+    Cutter[i] <- "Low Endothelial/Low Mesenchymal"
+  } 
+  else{print("Problem")}
+}
+C <- data.frame(C, Class = Cutter)
+x<- C[ ,c("Class", "Timepoint")]
+
+ax <- aggregate(x, by = list(x$Timepoint), FUN = length)
+bx <- aggregate(x, by = list(x$Timepoint, x$Class), FUN = length)
+bx <- subset(bx, Group.2 == "Low Endothelial/High Mesenchymal")
+a <- ax[,2]
+b <- bx[,3]
+
+
+freq = NULL
+for(i in 1:length(b)){
+  freq[i] <- b[i]/a[i]
+}
+Ramper<- colorRampPalette(c("orange","red"), space = "rgb")
+freq.colors <- Ramper(7)
+
+Summary <- cbind(Summary, freq)
+c <- c(rep(c("grey80", "grey80", "orange", "grey80"), 7))
+
+ggplot(C, aes(x = Pecam1, y=S100a4, color = Timepoint))+
+  geom_point()+
+  scale_color_manual(values = col)+
+  geom_abline(slope = 0, intercept = top_Mes, color = "grey50")+
+  geom_vline(aes(xintercept = bottom_Endo), color = "grey50")+ 
+  xlab("Pecam1")+
+  ylab("S100a4")+
+  facet_grid(~Timepoint, scale= "fixed", space = "free")+
+  theme(legend.position = "none")
+
+# Cdh5 vs. S100a4
+C <- data.frame(B,B2, Endo_Mean = x,Mesenchymal_Mean= y, Timepoint = ECs@meta.data$Timepoint)
+bottom_Endo<- as.numeric(median(expm1(ECs@data["Cdh5",which(ECs@data["Cdh5", ] > 0) ])))
+top_Mes<- as.numeric(median(expm1(ECs@data["S100a4",which(ECs@data["S100a4", ] > 0) ])))
+
+Cutter <- NULL
+for(i in rownames(C)){
+  if (C[i,"Cdh5"] < bottom_Endo & C[i,"S100a4"] > top_Mes){
+    Cutter[i] <- "Low Endothelial/High Mesenchymal"
+  }
+  else if (C[i,"Cdh5"] >= bottom_Endo & C[i,"S100a4"] > top_Mes){
+    Cutter[i] <- "High Endothelial/High Mesenchymal"
+  }
+  else if (C[i,"Cdh5"] >= bottom_Endo & C[i,"S100a4"] <= top_Mes){
+    Cutter[i] <- "High Endothelial/Low Mesenchymal"
+  }
+  else if (C[i,"Cdh5"] < bottom_Endo & C[i,"S100a4"] <= top_Mes){
+    Cutter[i] <- "Low Endothelial/Low Mesenchymal"
+  } 
+  else{print("Problem")}
+}
+C <- data.frame(C, Class = Cutter)
+x<- C[ ,c("Class", "Timepoint")]
+
+ax <- aggregate(x, by = list(x$Timepoint), FUN = length)
+bx <- aggregate(x, by = list(x$Timepoint, x$Class), FUN = length)
+bx <- subset(bx, Group.2 == "Low Endothelial/High Mesenchymal")
+a <- ax[,2]
+b <- bx[,3]
+
+
+freq = NULL
+for(i in 1:length(b)){
+  freq[i] <- b[i]/a[i]
+}
+Ramper<- colorRampPalette(c("orange","red"), space = "rgb")
+freq.colors <- Ramper(7)
+
+Summary <- cbind(Summary, freq)
+c <- c(rep(c("grey80", "grey80", "orange", "grey80"), 7))
+
+ggplot(C, aes(x = Cdh5, y=S100a4, color = Timepoint))+
+  geom_point()+
+  scale_color_manual(values = col)+
+  geom_abline(slope = 0, intercept = top_Mes, color = "grey50")+
+  geom_vline(aes(xintercept = bottom_Endo), color = "grey50")+ 
+  xlab("Cdh5")+
+  ylab("S100a4")+
+  facet_grid(~Timepoint, scale= "fixed", space = "free")+
+  theme(legend.position = "none")
+
+# Cdh5 vs. Fn1
+C <- data.frame(B,B2, Endo_Mean = x,Mesenchymal_Mean= y, Timepoint = ECs@meta.data$Timepoint)
+bottom_Endo<- as.numeric(median(expm1(ECs@data["Cdh5",which(ECs@data["Cdh5", ] > 0) ])))
+top_Mes<- as.numeric(median(expm1(ECs@data["Fn1",which(ECs@data["Fn1", ] > 0) ])))
+
+Cutter <- NULL
+for(i in rownames(C)){
+  if (C[i,"Cdh5"] < bottom_Endo & C[i,"Fn1"] > top_Mes){
+    Cutter[i] <- "Low Endothelial/High Mesenchymal"
+  }
+  else if (C[i,"Cdh5"] >= bottom_Endo & C[i,"Fn1"] > top_Mes){
+    Cutter[i] <- "High Endothelial/High Mesenchymal"
+  }
+  else if (C[i,"Cdh5"] >= bottom_Endo & C[i,"Fn1"] <= top_Mes){
+    Cutter[i] <- "High Endothelial/Low Mesenchymal"
+  }
+  else if (C[i,"Cdh5"] < bottom_Endo & C[i,"Fn1"] <= top_Mes){
+    Cutter[i] <- "Low Endothelial/Low Mesenchymal"
+  } 
+  else{print("Problem")}
+}
+C <- data.frame(C, Class = Cutter)
+x<- C[ ,c("Class", "Timepoint")]
+
+ax <- aggregate(x, by = list(x$Timepoint), FUN = length)
+bx <- aggregate(x, by = list(x$Timepoint, x$Class), FUN = length)
+bx <- subset(bx, Group.2 == "Low Endothelial/High Mesenchymal")
+a <- ax[,2]
+b <- bx[,3]
+
+
+freq = NULL
+for(i in 1:length(b)){
+  freq[i] <- b[i]/a[i]
+}
+Ramper<- colorRampPalette(c("orange","red"), space = "rgb")
+freq.colors <- Ramper(7)
+
+Summary <- cbind(Summary, freq)
+c <- c(rep(c("grey80", "grey80", "orange", "grey80"), 7))
+
+ggplot(C, aes(x = Cdh5, y=Fn1, color = Timepoint))+
+  geom_point()+
+  scale_color_manual(values = col)+
+  geom_abline(slope = 0, intercept = top_Mes, color = "grey50")+
+  geom_vline(aes(xintercept = bottom_Endo), color = "grey50")+ 
+  xlab("Cdh5")+
+  ylab("Fn1")+
+  facet_grid(~Timepoint, scale= "fixed", space = "free")+
+  theme(legend.position = "none")
+```
+
+# Figure 3a
+
+```{r}
+Data <- MILENA.filtered
+
+Data <- SetAllIdent(Data, id= "EndMT.counter")
+#Genes <- c("Serpine1", "Col1a1", "Col1a2", "Fn1", "Col3a1", "Timp1", "Postn", "Col8a1", "Col5a2", "Col18a1", "Loxl1", "Eln",
+#           "Pdgfa", "Tgfbi", "Loxl2",
+#           "Lgals1", "Anxa1", "Anxa2","Thbs1", "Mmp14", "Mmp2", "Glipr2",
+#           "Pkm", "Pgam1", "Aldoa", "Fabp5", "Gpihbp1", "Fabp4", "Fabp5","Cd36", "Mgll",
+#           "Dek", "Irf1", "Ets1", "Ets2", "Tshz2", "Hmgb2", "Meox2", "Klf2")
+
+#Annotation <- c(rep("Mesenchymal", times = 15), rep("Adherence and Migration", times = 7), rep("Metabolism", times = 9),
+#                rep("Transcription factor", times = 8))
+
+A <- FindMarkers(Data, ident.1 = "EndMT+", ident.2 = "EndMT-", logfc.threshold = 0.25, test.use = "bimod")
+
+A$p_val_adj <- ifelse(A$p_val_adj == 0, 1e-300, A$p_val_adj)
+A$gene <- rownames(A)
+
+A$cluster <- ifelse(A$avg_logFC < 0, "EC", "EndMT")
+#gene.cluster <- hash::hash(keys = Genes, values = Annotation)
+
+#y = NULL
+#for(i in rownames(A)){
+#  y <- c(y, gene.cluster[[as.character(A[i,"gene"])]])
+#}
+
+A.top <- A %>% group_by(cluster)
+
+Genes.use <- c("Mfap4","Mfap5", "Serpine1", "Col1a1", "Col1a2", "Fn1", "Col3a1", "Timp1", "Postn",
+               "Bgn", "Col8a1", "Tagln", "Col5a2", "Fabp4", "Gpihbp1",
+               "Tcf15", "Mgll", "Cd36", "Fabp5", "Id1", "Klf2", "Ets1")
+Annotation <- c("Mesenchymal","Mesenchymal", "Mesenchymal", "Mesenchymal", "Mesenchymal", "Mesenchymal", "Mesenchymal",
+                "Mesenchymal", "Mesenchymal", "Mesenchymal", "Mesenchymal", "Mesenchymal",
+                "Mesenchymal", "Metabolism","Metabolism", "Transcription",
+                "Metabolism", "Metabolism", "Metabolism", "Transcription", "Transcription", "Transcription")
+
+A.top <- filter(A.top, gene %in% Genes.use)
+gene.cluster <- hash::hash(keys = Genes.use, values = Annotation)
+
+y = NULL
+for(i in rownames(A.top)){
+  if(A.top[i,"gene"] %in% Genes.use){
+y[i] <- gene.cluster[[as.character(A.top[i,"gene"])]]
+  }
+  else{y[i] = "other"}
+}
+A.top <- data.frame(A.top, G = y)
+
+sort<- A.top[order(-A.top$avg_logFC), ]
+
+A.top$gene <- factor(A.top$gene, levels = unique(sort$gene))
+
+A.top$G<- factor(A.top$G, levels = c("Mesenchymal", "Metabolism", "Transcription", "other"))
+
+A.top <- filter(A.top, G != "other")
+
+ggplot(A.top, aes(x=cluster, y= gene, color = avg_logFC, size = -log10(p_val_adj)))+ 
+  geom_point(pch = 19)+ 
+  scale_color_gradient2(low = "red1", mid = "grey80", high = "red1", name = "ln(Fold change)")+
+  scale_size(name = "log10(p-value)")+
+  facet_grid(G~., scales = "free", space = "free")+
+  scale_x_discrete(labels= c("EndMT-", "EndMT+"))+
+  ggtitle("")
+```
+
+# Figure 3b
+
+```{r}
+Data = MILENA.filtered
+Data <- SetAllIdent(Data, id = "EndMT.counter")
+EndMT.Marker <- FindMarkers(Data, ident.1 = "EndMT+", ident.2 = "EndMT-", logfc.threshold = 0.2, test.use = "bimod")
+EndMT.Marker$gene <- rownames(EndMT.Marker)
+EndMT.filtered <- filter(EndMT.Marker, p_val_adj < 0.01)
+
+EndMT.filtered$bin <- ifelse(EndMT.filtered$avg_logFC < 0, "EndMT-", "EndMT+")
+
+A.GO. = NULL
+for(i in c("EndMT+", "EndMT-")){
+Marker <- filter(EndMT.filtered, bin == i)
+GO. <- enrichr(Marker$gene, databases = c("GO_Biological_Process_2018", "GO_Molecular_Function_2018"))
+EndMTpos.Marker <- filter(EndMT.filtered, avg_logFC > 0)
+tab1 <- data.frame(GO.[["GO_Biological_Process_2018"]], State = rep(i, length(GO.[["GO_Biological_Process_2018"]]$Term))) 
+tab2 <- data.frame(GO.[["GO_Molecular_Function_2018"]], State = rep(i, length(GO.[["GO_Molecular_Function_2018"]]$Term)))
+
+GO. <- data.frame(rbind(tab1, tab2))
+A.GO. <- data.frame(rbind(A.GO., GO.))
+}
+
+A.GO.top <- A.GO. %>% group_by(State) %>% top_n(n=10, wt = Combined.Score) 
+A.GO.top. <- filter(A.GO., Term %in% A.GO.top$Term)
+Split_GO <- function(x){
+X <- str_wrap(x, width = 30)
+Split.Terms <- NULL
+for (i in X){
+  GO.string <- paste("(GO",unlist(str_split(i, pattern = "\\(GO"))[-1],sep = "")
+  
+  if(str_detect(GO.string, "\n") == T){
+    new.string <- str_remove(GO.string, "\n")
+    new.string <- paste0("\n",new.string)
+    S <- str_split(i, pattern = "[(]")
+    new.string <- paste0(S[[1]][1], new.string)}
+  else{new.string <- i}
+    Split.Terms <- c(Split.Terms, new.string)
+}
+return(Split.Terms)
+}
+
+A.GO.top.$Term <- Split_GO(A.GO.top.$Term)
+
+sort <- A.GO.top.[order(-A.GO.top.$Combined.Score), ]
+
+A.GO.top.$Term <- factor(A.GO.top.$Term, levels = unique(sort$Term))
+
+ggplot(A.GO.top., aes(x=Term, y= Combined.Score, fill = State))+
+  geom_col(color = "black", width = 0.8)+
+  facet_wrap(~State, nrow = 1, scales = "fixed")+
+  coord_flip(expand = T) +
+  xlab("")+
+  ylab("")+
+  theme(axis.text.y = element_text(size = 14))
+```
+
+# Figure 3c
+
+```{r}
+Data = MILENA.filtered
+
+Data <- SetAllIdent(Data, id = "EndMT.counter")
+
+Gene_list = c("Slc2a1", "Hk1", "Hk2", "Gpi1", "Pfkm", "Pfkp", "Aldoa", 
+              "Gapdh", "Eno1", "Eno3", "Pkm", "Cs", "Aco2", "Idh1", "Idh2", "Idh3a", "Idh3b", 
+              "Sdhaf2", "Fh1", "Mdh1", "Mdh2", "Ldha", "Ldhb", "Slc1a5", "Gls", "Glul", "Pycr2", "Pycrl", 
+              "Aldh18a1", "G6pdx", "Rpia", "Cd36", "Fabp4", "Fabp5", "Mgll", "Gpihbp1", "Degs1")
+
+for (i in Gene_list){
+  if(length(Data@data[i,] == length(rownames(Data@meta.data)))){print(i)}
+}
+
+EndMT <- c("other", "EndMT+", "EndMT-")
+FC <- NULL
+p.val <- NULL
+Ti <- NULL
+for (i in 1:length(EndMT)){
+  print(EndMT[i])
+  if(i == 1){
+    p.val <- rep(NA, length(Gene_list))}
+  else{
+    Tester <- FindMarkers(Data, genes.use = Gene_list, test.use = "bimod", logfc.threshold = 0, min.pct = 0, return.thresh = 1,ident.2 = "other" ,ident.1 = EndMT[i])
+    Tester <- Tester[Gene_list, ]
+    p.val <- cbind(p.val, Tester$p_val_adj)}
+}
+
+G <- NULL
+Means <- NULL
+for (i in EndMT){
+  for(j in Gene_list){
+    x <- mean(expm1(Data@data[j, WhichCells(Data, cells.use = which(Data@meta.data$EndMT.counter == i))]))
+    G <- c(G,x)
+  }
+  Means= cbind(Means, G)
+  G <- NULL
+}
+
+rownames(Means) <- Gene_list
+rownames(p.val) <- Gene_list
+colnames(Means) <- EndMT
+colnames(p.val) <- EndMT
+
+#Means. <- Means
+#for (i in 1:length(p.val)){
+  #if(p.val[i] > 0.05 & is.na(p.val[i]) == F){
+  #  Means[i] <- NA
+ # }
+#}
+
+colo <- c("blue", "grey80", "red")
+my_palette <- colorRampPalette(colo)(255)
+
+Pathway <- c(rep("Glycolysis", times = 11), rep("TCA-Cycle", times = 12), rep("Glutamine", times = 5), rep("Pentose-Phosphate", times = 3), rep("Fatty-acid metabolism", 6))
+J_dataframe <- data.frame(Pathway = Pathway)
+rownames(J_dataframe) <- rownames(Means)
+
+pheatmap::pheatmap(Means, scale = "row", cluster_rows = F, cluster_cols = F, 
+                   color = my_palette, na_col = "white", border_color = "white", gaps_row = c(11,23,28,31), annotation_row = J_dataframe)
+```
+
+# Figure 3d
+
+```{r}
+Data = EC.R.by.marker
+
+Data <- SetAllIdent(Data, id = "Timepoint")
+
+Gene_list = c("Slc2a1", "Hk1", "Hk2", "Gpi1", "Pfkm", "Pfkp", "Aldoa", 
+              "Gapdh", "Eno1", "Eno3", "Pkm", "Cs", "Aco2", "Idh1", "Idh2", "Idh3a", "Idh3b", 
+              "Sdhaf2", "Fh1", "Mdh1", "Mdh2", "Ldha", "Ldhb", "Slc1a5", "Gls", "Glul", "Pycr2", "Pycrl", 
+              "Aldh18a1", "G6pdx", "Rpia", "Cd36", "Fabp4", "Fabp5", "Mgll", "Gpihbp1", "Degs1")
+
+for (i in Gene_list){
+  if(length(Data@data[i,] == length(rownames(Data@meta.data)))){print(i)}
+}
+
+FC <- NULL
+p.val <- NULL
+Ti <- NULL
+for (i in 1:length(anno)){
+  print(anno[i])
+  if(i == 1){
+    p.val <- rep(NA, length(Gene_list))}
+  else{
+    Tester <- FindMarkers(Data, genes.use = Gene_list, test.use = "bimod", logfc.threshold = 0, min.pct = 0, return.thresh = 1,ident.2 = "Homeostasis" ,ident.1 = anno[i])
+    Tester <- Tester[Gene_list, ]
+    p.val <- cbind(p.val, Tester$p_val_adj)}
+}
+
+G <- NULL
+Means <- NULL
+for (i in anno){
+  for(j in Gene_list){
+    x <- mean(expm1(Data@data[j, WhichCells(Data, cells.use = which(Data@meta.data$Timepoint == i))]))
+    G <- c(G,x)
+  }
+  Means= cbind(Means, G)
+  G <- NULL
+}
+
+rownames(Means) <- Gene_list
+rownames(p.val) <- Gene_list
+colnames(Means) <- c("Hom", "d1", "d3", "d5", "d7", "d14", "d28")
+colnames(p.val) <- anno
+
+#Means. <- Means
+#for (i in 1:length(p.val)){
+  #if(p.val[i] > 0.05 & is.na(p.val[i]) == F){
+  #  Means[i] <- NA
+ # }
+#}
+
+colo <- c("blue", "grey80", "red")
+my_palette <- colorRampPalette(colo)(255)
+
+Pathway <- c(rep("Glycolysis", times = 11), rep("TCA-Cycle", times = 12), rep("Glutamine", times = 5), rep("Pentose-Phosphate", times = 3), rep("Fatty-acid metabolism", 6))
+J_dataframe <- data.frame(Pathway = Pathway)
+rownames(J_dataframe) <- rownames(Means)
+
+pheatmap::pheatmap(Means, scale = "row", cluster_rows = F, cluster_cols = F, 
+                   color = my_palette, na_col = "white", border_color = "white", gaps_row = c(11,23,28,31), annotation_row = J_dataframe)
+```
+
+# Figure 4a, b and c
+
+```{r}
+Data = Tracing
+
+Data <- SetAllIdent(Data, id = "res.0.6")
+TSNEPlot(Data)
+
+Data <- SetAllIdent(Data, id = "GFP")
+
+TSNEPlot(Data, colors.use = c("grey80", "darkgreen"))
+
+FeaturePlot(Data, features.plot = c("Pecam1", "Cdh5", "Vwf", "Col1a1", "Pdgfra", "Serpine1"), cols.use = c("skyblue", "brown"), no.legend = F, pt.size = 5, nCol = 3, vector.friendly = T, coord.fixed = T)
+
+GOI <- c("Pecam1", "Cdh5", "Vwf", "Col1a1", "Pdgfra", "Serpine1")
+A = data.frame(Dimension1 = Tracing@dr$tsne@cell.embeddings[,"tSNE_1"], Dimension2 = Tracing@dr$tsne@cell.embeddings[,"tSNE_2"], Barcode = rownames(Tracing@dr$tsne@cell.embeddings))
+for(i in GOI){
+  A <- data.frame(A, Tracing@scale.data[i, ])
+}
+
+colnames(A)[-c(1:3)] <- GOI
+
+melt.A <- reshape2::melt(A, id = colnames(A)[1:3])
+
+
+
+ggplot(melt.A, aes(x = Dimension1, y = Dimension2, color = value))+
+  geom_point(size = .4)+
+  scale_color_gradient2(low = "skyblue", high = "brown", mid = "skyblue")+
+  facet_wrap(~variable, shrink = T)
+```
+
+# Figure 4 d
+
+```{r}
+'%!in%' <- function(x,y)!('%in%'(x,y))
+annos = c("Hom","d1","d3","d7","d14","d28")
+Data = SubsetData(Data, cells.use = WhichCells(Data, cells.use = which(Data@meta.data$orig.ident %!in% c("Tam-Control", "d48"))))
+
+Data <- FindVariableGenes(object = Data, mean.function = ExpMean, dispersion.function = LogVMR, 
+                                     x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5)
+Data <- ScaleData(object = Data, vars.to.regress = c("nUMI", "percent.mito"))
+
+Data <- RunPCA(object = Data, pc.genes = Data@var.genes, do.print = TRUE, pcs.print = 1:5, 
+                          genes.print = 5, pcs.compute = 50)
+
+PCElbowPlot(object = Data, num.pc = 50)
+
+Data <- FindClusters(object = Data, reduction.type = "pca", dims.use = 1:15, 
+                                resolution = 0.7, print.output = 0, save.SNN = TRUE)
+
+Data <- RunTSNE(object = Data, dims.use = 1:15, do.fast = TRUE)
+
+TSNEPlot(object = Data, do.label = T)
+
+GFP <- Data
+
+Transient <- function(End.marker,Mes.marker){
+
+Counter <- NULL
+
+A <- data.frame(Timepoint = Data@meta.data$orig.ident, 
+                Mes.marker = expm1(Data@data[Mes.marker,]),
+                End.marker = Data@data[End.marker,], 
+                Cluster = Data@meta.data$res.0.7)
+
+for(i in rownames(A)){
+  
+  if(A[i, "End.marker"] != 0 & A[i, "Mes.marker"] == 0){
+    Counter[i] = "Naive"
+  }
+  else if(A[i, "End.marker"] != 0 & A[i, "Mes.marker"] != 0){
+    Counter[i] = "Transient"
+  }
+  else if(A[i, "End.marker"] == 0 & A[i, "Mes.marker"] != 0){
+    Counter[i] = "Full Mesenchymal"
+  }
+  else{Counter[i] = "other"}
+}
+
+A<- data.frame(A, Dis = Counter)
+A$Dis <- factor(A$Dis, levels =  c("Naive", "Transient", "Full Mesenchymal", "other"))
+length(GFP@meta.data$nUMI)
+table(Counter)
+length(GFP@meta.data$nUMI) - length(Counter)
+
+A.sum.1 <- A %>% group_by(Timepoint, Dis) %>% tally %>% mutate(freq = n/sum(n)) %>% complete(Dis, fill = list(n = 0, freq = 0))
+
+p1<- ggplot(A.sum.1, aes(x= Timepoint, y= freq, fill = Dis))+
+  geom_col(color = "black", position = position_dodge(width = 1))+
+  scale_y_continuous(labels = scales::percent_format(), name = "Relative number of cells")+
+  theme(legend.title = element_blank(), axis.title.y = element_text(size = 10),
+        axis.text.x = element_text(size = 10))+
+  facet_grid(~Dis)+
+  ggtitle(paste("Based on", Mes.marker))
+
+A.sum.2 <- A %>% group_by(Cluster, Dis) %>% tally %>% mutate(freq = n/sum(n)) %>% complete(Dis, fill = list(n = 0, freq = 0))
+
+p2 <- ggplot(A.sum.2, aes(x= Cluster, y= freq, fill = Dis))+
+  geom_col(color = "black", position = position_dodge(width = 1))+
+  scale_y_continuous(labels = scales::percent_format(), name = "Relative number of cells")+
+  theme(legend.title = element_blank(), axis.title.y = element_text(size = 10))+
+  facet_grid(~Dis)
+
+plot <- ggarrange(p1, p2, nrow = 2, common.legend = T, legend = "none")
+return(plot)
+}
+
+Test.Genes <- c("Fn1", "Serpine1", "Col1a1", "Col3a1", "Col4a1")
+
+for(i in Test.Genes){
+  svg(width = 11.6, height = 9.3, filename = paste0("Transient with ", i, ".svg"))
+  print(Transient(End.marker = "Cdh5", Mes.marker = i))
+  dev.off()
+}
+```
+
+# Figure 4e and f and g
+
+```{r}
+Data = GFP
+Data = SubsetData(Data, cells.use = WhichCells(Data, cells.use = which(Data@meta.data$orig.ident %!in% c("Tam-Control", "d48"))))
+
+Data <- FindVariableGenes(object = Data, mean.function = ExpMean, dispersion.function = LogVMR, 
+                                     x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5)
+Data <- ScaleData(object = Data, vars.to.regress = c("nUMI", "percent.mito"))
+
+Data <- RunPCA(object = Data, pc.genes = Data@var.genes, do.print = TRUE, pcs.print = 1:5, 
+                          genes.print = 5, pcs.compute = 50)
+
+PCElbowPlot(object = Data, num.pc = 50)
+
+Data <- FindClusters(object = Data, reduction.type = "pca", dims.use = 1:15, 
+                                resolution = 0.7, print.output = 0, save.SNN = TRUE)
+
+Data <- RunTSNE(object = Data, dims.use = 1:15, do.fast = TRUE)
+
+GFP <- Data
+
+TSNEPlot(object = Data, do.label = T)
+
+Marker.recluster <- FindAllMarkers(Data, logfc.threshold = 0.2, test.use = "bimod", only.pos = T)
+
+Genes <- c("Col1a2", "Col3a1", "Col1a1", "Col6a1", "Col6a2", "Gsn", "Loxl1",
+           "Fabp5", "Fabp4", "Pecam1", "Cdh5", "Vwf", "Eng", "Prox1", "Lyve1", "Thy1",
+           "Sox17", "Gja5", "Cldn5", "Fn1", "S100a4", "Tgfbr2", "Sulf2", "Mmp2", "Pdgfra", "Apoe",
+           "Bgn", "Bmp4", "Icam1", "Mfap4", "Mfap5", "Fbln5", "Nos3")
+
+order <- c("Gsn", "Col1a1", "Col3a1", "Col1a2", "Loxl1", "Mfap5", "Col6a2", "Mmp2", "Col6a1", "Mfap4", "Pdgfra", "Gja5", "Fbln5", "Cldn5", "Sox17", "S100a4", "Pecam1", "Sulf2", "Nos3", "Cdh5", "Tgfbr2", "Bgn", "Icam1", "Fn1", "Bmp4", "Thy1", "Lyve1", "Prox1",
+           "Fabp5", "Apoe", "Eng", "Vwf", "Fabp4")
+
+
+for(i in Genes){
+  if(i %in% rownames(Data@data))
+  {print(i)}
+  else {stop(paste0(i, " not found"))}
+}
+
+A <- FindAllMarkers(object = Data, genes.use = Genes, min.pct = 0, logfc.threshold = 0, test.use = "bimod")
+A$p_val_adj <- ifelse(A$p_val_adj == 0, 1e-300, A$p_val_adj)
+
+
+A$gene <- factor(A$gene, levels = order)
+
+ggplot(A, aes(x=cluster, y= gene, color = avg_logFC, size = -log10(p_val_adj)))+ 
+  geom_point(pch = 19)+ 
+  scale_color_gradient2(low = "blue1", mid = "grey80", high = "red1", name = "ln(Fold change)")+
+  scale_size(name = "log10(p-value)")+ 
+  ggtitle("Marker in Subcluster")
+
+df <- data.frame(Cluster = GFP@meta.data$res.0.7, Timepoint = GFP@meta.data$orig.ident)
+
+df.sum <- df %>% group_by(Timepoint, Cluster) %>% tally() %>% mutate(freq = n/sum(n))
+
+df.sum <- filter(df.sum, Timepoint %in% c("Hom", "d1", "d7", "d14"))
+
+ggplot(df.sum, aes(x = "", y = freq, fill = Cluster))+
+  geom_bar(color = "black", stat = "identity")+
+  coord_polar("y", start = 0)+
+  facet_grid(~Timepoint)+
+  theme_minimal()+
+  theme(axis.line = element_blank(), axis.text = element_blank(), axis.ticks = element_blank())
+```
+
+--------------------------------------------------------------
+Supplementary Figures
+--------------------------------------------------------------
+# Supplementary Figure 1a
+
+```{r message=FALSE, warning=FALSE}
+# TSNE Plot 
+
+Genes.TNSE <- c("Pecam1", "Cdh5", "Lyz2", "Cd93", "Lyve1", "Col1a1", "Myl9", "Pdgfra", "Esam", "Emcn", "Sox17", "Gpihbp1", "Cd79a",
+                "Cd14", "Cd48", "Cd33", "Itgam", "Ptprc", "Cd209a", "Cd8b1", "Cd3d", "Cd69", "Acta2", "Mgp", "Bgn")
+for (i in Genes.TNSE){
+  if(length(MILENA.filtered@data[i,] == length(rownames(MILENA.filtered@meta.data)))){print(i)}
+}
+
+
+Markers.TSNE <- FindAllMarkers(MILENA.filtered, genes.use = Genes.TNSE, logfc.threshold = 0, test.use = "bimod", min.pct = 0)
+
+A <- data.frame(Gene = Markers.TSNE$gene, log_FC = Markers.TSNE$avg_logFC, 
+                p.value = Markers.TSNE$p_val_adj, Cluster = Markers.TSNE$cluster)
+# Replace 0 with 1.0e-300
+for (i in rownames(A)){
+  if(A[i,"p.value"] == 0){
+    A[i,"p.value"] <- 1.0e-300
+  }
+}
+
+A$Gene <- factor(A$Gene, levels = c("Cd79a", "Cd69", "Ptprc", "Cd8b1", "Cd3d", "Cd209a", "Cd48","Myl9", "Acta2", "Pecam1", "Gpihbp1", "Esam", "Emcn", "Cdh5", "Cd93", "Sox17", "Lyve1", "Lyz2", "Cd14","Itgam", "Cd33", "Bgn", "Col1a1", "Mgp", "Pdgfra"))
+
+Group = NULL
+for (i in rownames(A)){
+  if(A[i,"Cluster"] %in% c(2,3,12,15)){
+    Group[i] <- "Macrophages/Monocytes"
+  }
+  else if(A[i,"Cluster"] %in% c(6,7,17,18)){
+    Group[i] <- "Endothelial cells"
+  }
+  else if(A[i,"Cluster"] %in% c(0,1,4,5,14,8)){
+    Group[i] <- "Fibroblasts"
+  }
+  else if(A[i,"Cluster"] %in% c(9)){
+    Group[i] <- "B-cells"
+  }
+  else if(A[i,"Cluster"] %in% c(13)){
+    Group[i] <- "T-cells"
+  }
+  else if(A[i,"Cluster"] %in% c(11)){
+    Group[i] <- "Dendritic cells"
+  }
+  else if(A[i,"Cluster"] %in% c(16)){
+    Group[i] <- "Smooth muscle cells"
+  }
+  else{
+    Group[i] <- "Unknown"
+  }
+}
+
+A <- data.frame(A, log.10.p = -log10(A$p.value), Groups = Group)
+
+A$Groups <- factor(A$Groups, levels = c("Fibroblasts", "Macrophages/Monocytes", "Endothelial cells", "Smooth muscle cells", "Dendritic cells", "T-cells", "B-cells", "Unknown"))
+
+ggplot(A, aes(x=Cluster, y= Gene, color = log_FC, size = log.10.p))+ 
+  geom_point(pch = 19)+ 
+  scale_color_gradient2(low = "blue1", mid = "grey80", high = "red1", name = "ln(Fold change)")+
+  scale_size(name = "log10(p-value)")+ 
+  ggtitle("Marker in Cluster")+ 
+  facet_grid(~Groups, space = "free", scales= "free")
+```
+
+# Figure Supplement 1b
+
+```{r}
+MILENA.original <- readRDS("/media/Helios_LukasT/Figure Manuscript Version April 2020/Final submission/R Plots/AggregatePC24res0.5withNames.rds")
+
+orig.barcodes <- rownames(MILENA.original@meta.data)
+filter.barcodes <- rownames(MILENA.filtered@meta.data)
+
+orig.barcodes_no_sufix <- unlist(str_split(orig.barcodes, pattern = "-"))
+orig.barcodes_no_sufix <- orig.barcodes_no_sufix[which(orig.barcodes_no_sufix %!in% c("1","2","3","4","5","6","7"))]
+
+orig.barcodes_no_sufix <- unique(orig.barcodes_no_sufix)
+
+anno <- c("Homeostasis", "d1_post", "d3_post", "d5_post", "d7_post", "d14_post", "d28_post")
+filter.barcodes_no_prefix <- unlist(str_split(filter.barcodes, pattern = "_"))
+filter.barcodes_no_prefix <- filter.barcodes_no_prefix[which(filter.barcodes_no_prefix %!in% c("Homeostasis", "d1", "d3", "d5", "d7", "d14", "d28", "post"))]
+
+filter.barcodes_no_prefix <- unique(filter.barcodes_no_prefix)
+
+Fmeta <- MILENA.filtered@meta.data
+Ometa <- MILENA.filtered@meta.data
+
+cluster.df <- data.frame()
+df.barcode <- NULL
+for(i in rownames(Fmeta)){
+  check <- str_detect(string = i, pattern = filter.barcodes_no_prefix)
+  pos <- which(check == T)
+  df.barcode[pos] <- i
+}
+
+nodes <- data.frame(name=c(as.character(M.sum$Old.cluster), as.character(M.sum$New.cluster)) %>% unique())
+
+# With networkD3, connection must be provided using id, not using real name like in the links dataframe.. So we need to reformat it.
+M.sum$IDOld.cluster=match(M.sum$Old.cluster, nodes$name)-1 
+M.sum$IDNew.cluster=match(M.sum$New.cluster, nodes$name)-1
+
+# prepare colour scale
+ColourScal ='d3.scaleOrdinal() .range(["#FDE725FF","#B4DE2CFF","#6DCD59FF","#35B779FF","#1F9E89FF","#26828EFF","#31688EFF","#3E4A89FF","#482878FF","#440154FF"])'
+
+# Make the Network
+sankeyNetwork(Links = M.sum, Nodes = nodes,
+              Source = "IDOld.cluster", Target = "IDNew.cluster",
+              Value = "n", NodeID = "name", 
+              sinksRight=FALSE, colourScale=ColourScal, nodeWidth=40, fontSize=13, nodePadding=20)
+```
+
+# Figure Supplement 3a and c
+
+```{r}
+Data <- EC.R.by.marker
+
+Data <- SetAllIdent(Data, id="State")
+Marker.States <- FindAllMarkers(Data, test.use = "bimod", logfc.threshold = 0.2, min.pct = 0)
+
+Marker.States <- filter(Marker.States, p_val_adj < 0.05)
+
+A.GO. = NULL
+for (St in levels(States)){
+State.marker <- filter(Marker.States, cluster == St, avg_logFC > 0)
+
+GO. <- enrichr(State.marker$gene, databases = c("GO_Biological_Process_2018", "GO_Molecular_Function_2018"))
+
+tab1 <- data.frame(GO.[["GO_Biological_Process_2018"]], State = rep(St, length(GO.[["GO_Biological_Process_2018"]]$Term))) 
+tab2 <- data.frame(GO.[["GO_Molecular_Function_2018"]], State = rep(St, length(GO.[["GO_Molecular_Function_2018"]]$Term)))
+
+GO. <- data.frame(rbind(tab1, tab2))
+A.GO. <- data.frame(rbind(A.GO., GO.))
+}
+
+A.GO.top <- A.GO. %>% group_by(State) %>% top_n(n = 10, wt = Combined.Score)
+
+Split_GO <- function(x){
+X <- str_wrap(A.GO.top$Term, width = 30)
+Split.Terms <- NULL
+for (i in X){
+  GO.string <- paste("(GO",unlist(str_split(i, pattern = "\\(GO"))[-1],sep = "")
+  
+  if(str_detect(GO.string, "\n") == T){
+    new.string <- str_remove(GO.string, "\n")
+    new.string <- paste0("\n",new.string)
+    S <- str_split(i, pattern = "[(]")
+    new.string <- paste0(S[[1]][1], new.string)}
+  else{new.string <- i}
+    Split.Terms <- c(Split.Terms, new.string)
+}
+return(Split.Terms)
+}
+
+A.GO.top$Term <- Split_GO(A.GO.top$Term)
+
+sort <- A.GO.top[order(A.GO.top$Combined.Score), ]
+
+A.GO.top$Term <- factor(A.GO.top$Term, levels = unique(sort$Term))
+
+ggplot(A.GO.top, aes(x=Term, y= Combined.Score, fill = State))+
+  geom_col(color = "black", width = 0.8)+
+  facet_wrap(~State, nrow = 1, scales = "free")+
+  coord_flip()+
+  xlab("")+
+  ylab("")+
+  theme(axis.text.y = element_text(size = 18))
+
+Terms <- c("positive regulation of fibroblast proliferation (GO:0048146)",
+           "positive regulation of cell proliferation (GO:0008284)",
+           "collagen biosynthetic process (GO:0032964)",
+           "vasculogenesis (GO:0001570)",
+           "regulation of endothelial cell migration (GO:0010594)",
+           "inflammatory response (GO:0006954)",
+           "angiogenesis involved in wound healing (GO:0060055)")
+
+GO.plot.data <- A.GO. %>% filter(Term %in% Terms) %>% group_by(Term) %>% complete(State, fill = list(rep(NA, 8)))
+val <- str_split(GO.plot.data$Overlap, "/")
+fraction = NULL
+for(i in 1:length(val)){
+  if(is.na(val[[i]])){
+    fraction[i] = NA
+  }
+  else {
+    fraction[i] <- as.numeric(val[[i]][1])/as.numeric(val[[i]][2])
+  }
+}
+GO.plot.data$Fraction <- fraction
+GO.plot.data$Term <- factor(GO.plot.data$Term, 
+                            levels = c("vasculogenesis (GO:0001570)",
+                                       "regulation of endothelial cell migration (GO:0010594)",
+                                       "angiogenesis involved in wound healing (GO:0060055)",
+                                       "inflammatory response (GO:0006954)",
+                                       "positive regulation of fibroblast proliferation (GO:0048146)", "collagen biosynthetic process (GO:0032964)","positive regulation of cell proliferation (GO:0008284)")) 
+                                       
+                                       
+GO.plot.data$ColorCode <- ifelse(GO.plot.data$Combined.Score < 10, "< 10", ifelse(GO.plot.data$Combined.Score < 80 , "< 80", "> 80"))                                      
+                                  
+ggplot(GO.plot.data, aes(x= Term, y= State, color = ColorCode, size = fraction))+
+  geom_point(na.rm = T)+
+  scale_color_manual(values =  c("grey80", "#ed9aa0", "red"), name = "Enrichment Score", na.translate = T, na.value = "white")+
+  scale_size_continuous(breaks = c(0,0.1,0.2,0.3), range = c(1,10), name = "Specificity", label = scales::percent_format())+
+  coord_flip()+
+  #theme(axis.text.x = element_text(angle = 45, face= "bold", hjust = 1), legend.position = "top")+
+  xlab("")+
+  ylab("States")
+```
+
+# Figure Supplement 3b
+
+```{r}
+Genes = c("Il1b", "Cd74", "Ctss", "Cxcl2", "Ccl4", "Ccl6", "Fcer1g", "Tyrobp", "Tnf", "Icam1", "Il6ra", "Eng", "Pecam1", "Cdh5", "Emcn", "Tie1", "Sox17", "Tcf15", "Meox2")
+
+for (i in Genes){
+  if(length(Data@data[i,] == length(rownames(Data@meta.data)))){print(i)}
+}
+
+Annotations <- c(1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,3,3)
+
+A <- FindAllMarkers(Data, genes.use = Genes, logfc.threshold = 0, min.pct = 0, test.use = "bimod")
+
+A$p_val_adj <- ifelse(A$p_val_adj == 0, 1e-300, A$p_val_adj)
+
+gene.cluster <- hash::hash(keys = Genes, values = Annotations)
+
+y = NULL
+for(i in rownames(A)){
+  y <- c(y, gene.cluster[[as.character(A[i,"gene"])]])
+}
+
+A <- data.frame(A, log.10.p = -log10(A$p_val_adj), Cluster.Gene = y)
+
+sort<- A[order(-A$avg_logFC), ]
+
+A$gene <- factor(A$gene, levels = unique(sort$gene))
+
+ggplot(A, aes(x=cluster, y= gene, color = avg_logFC, size = log.10.p))+ 
+  geom_point(pch = 19)+ 
+  scale_color_gradient2(low = "blue1", mid = "grey80", high = "red1", name = "ln(Fold change)")+
+  scale_size(name = "log10(p-value)")+ 
+  ggtitle("Marker in Cluster")+
+  facet_grid(Cluster.Gene~., space = "free", scales = "free")
+```
+
+# Figure Supplement 3d
+
+```{r}
+Data = EC.R.by.marker
+X <- data.frame(State = Data@meta.data$State, Tnf = expm1(Data@data["Tnf", ]), Il1b = expm1(Data@data["Il1b", ]), Ccl8 = expm1(Data@data["Ccl8", ]))
+
+Bin = NULL
+for (i in rownames(X)){
+  if(X[i,"State"] != "3"){Bin[i] <- "other"}
+  else if(X[i,"State"] == 3){Bin[i] <- "3"}
+}
+ X$State <- Bin
+ 
+X.m <- melt(X)
+ggplot(X.m, aes(x= State, y= value, fill = State))+
+  geom_jitter(height = 0, color = "grey80")+
+  geom_violin(scale = "width")+ 
+  facet_wrap(~variable, scales = "free") +
+  scale_y_continuous(name = "normalized UMI counts (log10)", trans = "log1p")+
+  theme(axis.line = element_line(size = 6), axis.text.x = element_text(size=18, face = "bold"),
+                                                 axis.text.y = element_text(size=12),
+                                                 axis.title = element_text(size=16), legend.position = "top", strip.text = element_text(size=18, face = "italic"))+
+  scale_fill_manual(values = c("#00bd7d", "cornsilk"))
+
+# All observations are significant
+Data <- SetAllIdent(Data, id = "State")
+Test <- FindMarkers(Data, genes.use = c("Tnf", "Il1b", "Ccl8"), test.use = "bimod", min.pct = 0, logfc.threshold = 0,
+                    ident.1 = "3")
+Test
+```
+
+# Figure Supplement 4a
+
+```{r}
+Data = EC.R.by.cluster
+Data <- FindVariableGenes(object = Data, mean.function = ExpMean, dispersion.function = LogVMR, 
+                                     x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5)
+Data <- ScaleData(object = Data, vars.to.regress = c("nUMI", "percent.mito"))
+
+Data <- RunPCA(object = Data, pc.genes = Data@var.genes, do.print = TRUE, pcs.print = 1:5, 
+                          genes.print = 5, pcs.compute = 25)
+
+PCElbowPlot(object = Data, num.pc = 25)
+
+Data <- FindClusters(object = Data, reduction.type = "pca", dims.use = 1:10, 
+                                resolution = 0.8, print.output = 0, save.SNN = TRUE)
+
+Data <- RunTSNE(object = Data, dims.use = 1:10, do.fast = TRUE)
+
+
+
+TSNEPlot(object = Data, do.label = T, colors.use = c("#e87276", "#e87276", "#e87276", "#e87276", "orange", "orange", "orange", "#e87276", "#e87276", "grey80", "#e87276", "grey80", "grey80"), label.size = 8)
+
+EC.R.by.cluster <- Data
+```
+
+# Figure Supplement 4b
+
+```{r}
+Data = EC.R.by.cluster
+
+Data <- SetAllIdent(Data, id = "res.0.8")
+
+Marker.recluster <- FindAllMarkers(Data, logfc.threshold = .2, min.pct = 0, test.use = "bimod", only.pos = T)
+
+Marker.recluster <- filter(Marker.recluster, p_val_adj < 0.05)
+
+FeaturePlot(Data, features.plot = c("Lyve1", "Notch3", "Il1b", "Col3a1", "Col1a2", "Cdh5", "Pecam1", "Fabp4", "Cd36"), cols.use = c("grey90", "darkred"), pt.size = .5, no.axes = T, coord.fixed = T, vector.friendly = F)
+```
+
+# Figure Supplement 4c
+
+```{r}
+
+EC.reclustered <- SubsetData(EC.R.by.cluster, ident.use = c("0","1","2","3","4","5","6","7","8","10"))
+
+Data <- EC.reclustered
+
+EC.reclustered <- SetAllIdent(EC.reclustered, id = "Timepoint")
+
+Endothelial.marker <- c("Pecam1", "Cdh5", "Sox17", "Cd93")
+for (i in Endothelial.marker){
+  if(length(EC.reclustered@data[i,] == length(rownames(EC.reclustered@meta.data)))){print(i)}
+}
+
+FC <- NULL
+p.val <- NULL
+Ti <- NULL
+for (i in 1:length(anno)){
+print(anno[i])
+if(i ==1){
+  p.val <- rep(NA, length(Endothelial.marker))}
+else{
+Tester <- FindMarkers(EC.reclustered, genes.use = Endothelial.marker, test.use = "bimod", logfc.threshold = 0, min.pct = 0, return.thresh = 1,ident.2 = "Homeostasis"
+                           ,ident.1 = anno[i])
+Tester <- Tester[Endothelial.marker, ]
+p.val <- cbind(p.val, Tester$p_val_adj)}
+}
+
+G <- NULL
+Means <- NULL
+for (i in anno){
+  for(j in Endothelial.marker){
+x <- mean(expm1(EC.reclustered@data[j, WhichCells(EC.reclustered, cells.use = which(EC.reclustered@meta.data$Timepoint == i))]))
+G <- c(G,x)
+  }
+  Means= cbind(Means, G)
+  G <- NULL
+}
+
+rownames(Means) <- Endothelial.marker
+rownames(p.val) <- Endothelial.marker
+colnames(Means) <- anno
+colnames(p.val) <- anno
+
+Means. <- Means
+for (i in 1:length(p.val)){
+  if(p.val[i] > 0.05 & is.na(p.val[i]) == F){
+    Means[i] <- NA
+  }
+}
+
+colo <- c("blue", "grey80", "red")
+my_palette <- colorRampPalette(colo)(255)
+
+pheatmap::pheatmap(Means, scale = "row", cluster_rows = F, cluster_cols = F, color = my_palette, na_col = "white", border_color = "white")
+
+tMeans.<- t(Means.)
+zMeans.<- scale(tMeans.)
+zMeans. <- t(zMeans.)
+Means.across.Genes <- colMeans(zMeans.)
+SEM.across.Genes <- apply(zMeans.,2,SEM)
+A <- data.frame(Timepoint = factor(anno, levels= anno), Me = Means.across.Genes, Se <- SEM.across.Genes)
+  
+ggplot(A, aes(x = Timepoint, y= Me, fill = Me))+ 
+  geom_col(color = "white")+
+  scale_fill_gradient2(low= "blue", mid= "grey80", high = "red")+
+  geom_errorbar(aes(ymin= Me-Se, ymax=Me+Se), width = 0.1)+
+  scale_y_continuous(name = "Mean z-score", position = "right")+ 
+  theme(legend.position = "none", axis.title.x = element_blank(), axis.text.x = element_blank(), axis.line.x = element_blank(), 
+        axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 10), axis.ticks.x = element_blank())
+```
+
+# Figure Supplement 4d
+
+```{r}
+EC.reclustered <- SubsetData(EC.R.by.cluster, ident.use = c("0","1","2","3","4","5","6","7","8","10"))
+
+Data <- EC.reclustered
+
+Relative.plot <- function(object = Data , Gene = Markers.to.Plot){
+for(i in Gene){
+  if(i %in% rownames(object@data))
+  {print(i)}
+  else {stop(paste0(i, " not found"))}
+}
+
+SEM<- function(x){
+  return(sd(x)/sqrt(length(x)))
+}
+
+A<- data.frame(object@meta.data$Timepoint)
+for (i in Gene){
+  A<- data.frame(A, expm1(object@data[i, ]))
+}
+
+colnames(A) <- c("Timepoint", "Gene")
+
+B<- subset(A, Timepoint == "Homeostasis")
+
+means.hom <- colMeans(B[2:(length(Gene)+1)])
+
+C= NULL
+for (i in 1:length(colnames(A))){
+  if(i != 1){
+    c = A[,i]/means.hom[i-1]
+    C = data.frame(cbind(C, c))
+    c=NULL
+  }
+}
+
+colnames(C)<- Gene
+C<- data.frame(C, Timepoint= A$Timepoint)
+
+melt.C<- melt(C)
+
+ggplot(melt.C, aes(x=factor(Timepoint, levels= rev(anno)), y= value, color= Timepoint))+
+  stat_summary(geom="pointrange", fun.y = "mean", fun.ymin = function(x) mean(x)-SEM(x), 
+               fun.ymax = function(x) mean(x)+SEM(x))+
+  coord_flip()+
+  scale_x_discrete(labels= c("d28", "d14", "d7", "d5", "d3", "d1", "Hom"))+
+  facet_wrap(~variable, scales= "free", nrow = 2)+ 
+  theme_bw(base_family = "")+
+  scale_color_manual(values = col)+
+  ylab("Fold-change to Homeostasis")+
+  geom_hline(yintercept = 1, linetype = "dotted")+
+  theme(legend.position = "none", axis.title.y = element_blank(), strip.text = element_text(face= "italic"), text = element_text(size=15))
+}
+
+####################################################
+Markers.to.Plot <- c("Fn1", "Mmp14", "S100a4", "Vim", "Tnc", "Col1a1", "Col3a1", "Serpine1", "Mmp9", "Snai1")
+Relative.plot()
+```
+
+Figure Supplement 4e, f and g
+
+```{r}
+df <- EC.reclustered@meta.data
+
+df$metacluster <- ifelse(df$res.0.8 %in% c("4", "5", "6"), "clusters 4,5,6", "other clusters")
+
+df.sum <- df %>% dplyr::group_by(EndMT.counter, metacluster) %>% tally() %>% mutate(Freq = n/sum(n)) %>% tidyr::complete(metacluster, fill = list(n=0, Freq = 0))
+
+df.sum <- df.sum %>% filter(EndMT.counter == "EndMT+")
+
+ggplot(df.sum, aes(x = metacluster, y = Freq, fill = metacluster))+
+  geom_col(color = "black") + 
+  scale_y_continuous(labels = scales::percent_format())+ 
+  labs(y = "% EndMA cells", x = "Meta-Cluster")+
+  scale_fill_manual(values = c("#e87276", "grey90"))
+
+df$pooltime <- ifelse(df$Timepoint %in% c("d1_post", "d3_post", "d5_post", "d7_post"), "Early (d1-d7)", ifelse(df$Timepoint %in% c("d14_post", "d28_post"), "Late (d14-d28)", "Hom"))
+
+df.sum <- df %>% dplyr::group_by(pooltime, metacluster) %>% tally() %>% mutate(Freq = n/sum(n)) %>% tidyr::complete(metacluster, fill = list(n=0, Freq = 0))
+
+df.sum$pooltime <- factor(df.sum$pooltime, levels = c("Hom","Early (d1-d7)","Late (d14-d28)"))
+
+ggplot(df.sum, aes(x = metacluster, y = Freq, fill = pooltime))+
+  geom_col(color = "black", position = "dodge") + 
+  scale_y_continuous(labels = scales::percent_format())+ 
+  labs(y = "% cells", x = "Meta-Cluster")+
+  scale_fill_manual(values = c("grey90", "#e87276", "grey90"), name = "Timepoint")
+
+EC.R.by.marker <- SetAllIdent(EC.R.by.marker, id = "State")
+State4.cells <- WhichCells(EC.R.by.marker, ident= "4")
+
+State4.in.recl <- ifelse(rownames(EC.reclustered@meta.data) %in% State4.cells, "state 4", "other state")
+
+names(State4.in.recl) <- rownames(EC.reclustered@meta.data)
+
+EC.reclustered <- AddMetaData(EC.reclustered, State4.in.recl, "State")
+
+df <- EC.reclustered@meta.data
+
+df$metacluster <- ifelse(df$res.0.8 %in% c("4", "5", "6"), "clusters 4,5,6", "other clusters")
+
+df.sum <- df %>% dplyr::group_by(metacluster, State) %>% tally() %>% mutate(Freq = n/sum(n)) %>% tidyr::complete(metacluster, fill = list(n=0, Freq = 0))
+
+ggplot(df.sum, aes(x = metacluster, y = Freq, fill = State))+
+  geom_col(color = "black", position = "dodge") + 
+  scale_y_continuous(labels = scales::percent_format())+ 
+  labs(y = "% ECs", x = "Meta-Cluster")+
+  scale_fill_manual(values = c("grey90", "#e87276"))
+```
+
+# Figure Supplement 4h
+
+```{r}
+EC.R.by.marker <- SetAllIdent(EC.R.by.marker, id = "State")
+
+States.in.recl <- NULL
+test = NULL
+
+for(i in rownames(EC.reclustered@meta.data)){
+  if(i %in% rownames(EC.R.by.marker@meta.data)){
+    States.in.recl[i] <- EC.R.by.marker@meta.data[i,"State"]
+  }
+  else{States.in.recl[i] <- "Pecam1-/Cdh5- but in EC cluster"
+  test <- c(test, i)}
+}
+
+names(States.in.recl) <- rownames(EC.reclustered@meta.data)
+
+EC.reclustered <- AddMetaData(EC.reclustered, States.in.recl, "All_State")
+
+EC.reclustered <- SetAllIdent(EC.reclustered, id = "All_State")
+
+TSNEPlot(EC.reclustered, colors.use = c(hue_pal()(5), "grey85")) + facet_wrap(~EC.reclustered@ident)
+
+```
+# Figure Supplement 7b
+
+```{r}
+Data <- MILENA.filtered
+
+A <- FindMarkers(Data, ident.1 = "EndMT+", ident.2 = "EndMT-", logfc.threshold = 0.1, test.use = "bimod", min.pct = 0.05)
+
+A$p_val_adj <- ifelse(A$p_val_adj == 0, 1e-300, A$p_val_adj)
+A$gene <- rownames(A)
+A <- filter(A, p_val_adj < .05)
+
+A$cluster <- ifelse(A$avg_logFC < 0, "EC", "EndMT")
+
+m_df = msigdbr(species = "Mus musculus", category = "H")
+head(m_df)
+
+gene_ids_vector <- A$avg_logFC
+names(gene_ids_vector) <- A$gene
+
+gene_ids_vector <- sort(gene_ids_vector, decreasing = TRUE)
+
+m_t2g = m_df %>% dplyr::select(gs_name, gene_symbol) %>% as.data.frame
+
+m_list = m_df %>% split(x = .$gene_symbol, f = .$gs_name)
+
+apoptosis.genes <- m_df %>% filter(gs_name == "HALLMARK_APOPTOSIS")
+
+A$Apoptosis <- ifelse(A$gene %in% apoptosis.genes$gene_symbol, "yes", "no")
+A$Apoptosis <- factor(A$Apoptosis, levels = c("yes", "no"))
+
+length(which(A[, "Apoptosis"] == "yes"))
+
+A.ap <- filter(A, Apoptosis == "yes")
+
+apop_df <- msigdbr(species = "Mus musculus", category = "C5") %>% filter(str_detect(gs_name, pattern = "DEATH") & str_detect(gs_name, pattern = "REGULATION"))
+
+Function.annotation <- NULL
+
+for(i in rownames(A.ap)){
+  gene <- A.ap[i,"gene"]
+  if(gene %in% apop_df$gene_symbol){
+    x <- subset(apop_df, gene_symbol == gene)
+    Function.annotation[i] <- paste(x$gs_name, collapse = ";")
+  }
+  else{Function.annotation[i] <- "none"}
+}
+
+A.ap$GOs <- Function.annotation
+
+A.ap$Association <- ifelse(str_detect(A.ap$GOs, pattern = "NEGATIVE") & str_detect(A.ap$GOs, pattern = "POSITIVE"), "both",
+                          ifelse(str_detect(A.ap$GOs, pattern = "NEGATIVE"), "negative", 
+                                 ifelse(str_detect(A.ap$GOs, pattern = "POSITIVE"), "positive",
+                                        ifelse(A.ap$GOs == "none", "none", "unclear"))))
+
+A.ap$Association <- factor(A.ap$Association, levels = c("none", "both", "positive", "negative", "unclear"))
+
+A.ap.sum <- A.ap %>% group_by(Association, cluster) %>% tally()
+
+ggplot(A.ap.sum, aes(x = cluster, y = n, fill = Association))+
+  geom_col(color = "black", position = "dodge")+
+  facet_grid(~Association)+
+  labs(x= "Enriched", y = "number of genes", title = "n=36 genes in Hallmark Apoptosis (M5902)")
+```
+
+# Figure Supplement 8b and c
+
+```{r}
+Idents(Col.integrated) <- "GFP"
+DimPlot(Col.integrated, cols = c("grey90", "darkgreen"))
+
+FeaturePlot(Col.integrated, features = c("Vwf", "Pecam1", "Cdh5", "Col1a2"))
+```
+
+# Figure Supplement 10a and b
+
+```{r}
+Data <- MILENA.filtered
+
+A <- FindMarkers(Data, ident.1 = "EndMT+", ident.2 = "EndMT-", logfc.threshold = 0.1, test.use = "bimod", min.pct = 0.05)
+
+A$p_val_adj <- ifelse(A$p_val_adj == 0, 1e-300, A$p_val_adj)
+A$gene <- rownames(A)
+A <- filter(A, p_val_adj < .05)
+
+A$cluster <- ifelse(A$avg_logFC < 0, "EC", "EndMT")
+
+m_df = msigdbr(species = "Mus musculus", category = "H")
+head(m_df)
+
+gene_ids_vector <- A$avg_logFC
+names(gene_ids_vector) <- A$gene
+
+gene_ids_vector <- sort(gene_ids_vector, decreasing = TRUE)
+
+m_t2g = m_df %>% dplyr::select(gs_name, gene_symbol) %>% as.data.frame
+
+m_list = m_df %>% split(x = .$gene_symbol, f = .$gs_name)
+
+GSEA <- fgsea(pathways = m_list, stats = gene_ids_vector, nperm = 10000)
+
+plotEnrichment(pathway = m_list[["HALLMARK_GLYCOLYSIS"]], stats = gene_ids_vector, gseaParam = 1, ticksSize = 0.2)+
+  labs(title = "GSEA: Hallmark Glycolysis(M5937)\n(DEG genes EndMA+ vs. EndMA-)")
+
+plotEnrichment(pathway = m_list[["HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION"]], stats = gene_ids_vector, gseaParam = 1, ticksSize = 0.2)+
+  labs(title = "GSEA: Hallmark Epithelial Mesenchymal Transition(M5930)\n(DEG genes EndMA+ vs. EndMA-)")
+
+E <- enricher(TERM2GENE = m_t2g, gene = names(gene_ids_vector))
+library(enrichplot)
+
+cnetplot(E, foldChange = gene_ids_vector, showCategory = 1)+
+  scale_color_steps(low = "orange", high = "limegreen", n.breaks = 2, breaks = 0)
+```
+
+# Supplement figure 13 a and b (Ralph Patrick)
+
+# Supplement figure 13 c
+```{r}
+Data = MILENA.filtered
+Ligand.Receptor.Genes <- c("Ptn", "Tnc", "Pgf", "Sema3d", "Inhba", "Tgfb2", "Tgfb3", "Igf2", "Ntn1", "Edn1",
+                           "Dll1", "Lama2", "Thbs1", "Thbs2", "Col5a2", "Col1a1", "Col1a2", "Angpt2", "Angptl2", 
+                           "Adam12", "Col4a4", "Col5a1", "Nid1", "Nlgn2", "Calr", "Ctgf", "Hsp90aa1",
+                           "Cx3cl1", "Col6a3", "Mdk", "Tslp", "Cxcl16")
+
+for(i in Ligand.Receptor.Genes){
+  if(i %in% rownames(Data@data))
+  {print(i)}
+  else {stop(paste0(i, " not found"))}
+}
+
+GO. <- enrichr(Ligand.Receptor.Genes, databases = c("GO_Biological_Process_2018", "GO_Molecular_Function_2018"))
+
+tab1 <- data.frame(GO.[["GO_Biological_Process_2018"]]) 
+tab2 <- data.frame(GO.[["GO_Molecular_Function_2018"]])
+
+GO. <- data.frame(rbind(tab1, tab2))
+Terms <- c("extracellular matrix organization (GO:0030198)",
+           "platelet-derived growth factor binding (GO:0048407)",
+           "collagen fibril organization (GO:0030199)", 
+           "positive regulation of cell migration (GO:0030335)",
+           "positive regulation of cell proliferation (GO:0008284)")
+           
+GO.$Lab <- ifelse(GO.$Term %in% Terms, "Lab", "no Lab")
+
+ggplot(GO., aes(x=-log10(Adjusted.P.value), y= Combined.Score, color = Lab))+
+  geom_point()+
+  coord_cartesian(ylim = c(0,80), xlim = c(0,30))+
+  geom_label_repel(data = subset(GO., GO.$Lab == "Lab"), aes(label = Terms), force = 30, nudge_y = 25, nudge_x = 50, size = 3, segment.alpha = 0.6)+
+  ggtitle("GO-Terms in Ligand/Receptor interaction only EndMT+")
+
+GO. <- GO. %>% arrange(desc(Combined.Score)) %>% top_n(n = 20, wt= Combined.Score)
+GO.$Term <- factor(GO.$Term, levels = rev(GO.$Term))
+ggplot(GO., aes(x= Term, y= Combined.Score, fill = Lab))+
+  geom_col(width = 0.9, position = "identity")+
+  theme(axis.text.y = element_blank(), text = element_text(size = 14), legend.position = "none",
+        axis.ticks.y = element_blank())+
+  ylab("Enrichment Score")+
+  xlab("GO-Term")+
+  scale_fill_manual(values= c("darkgreen", "grey40"))+
+  coord_flip(ylim = c(0,150))
+```
+
+# Supplement 13d
+
+```{r}
+Lig <- read.table("/media/ATLAS_NGS_storage/Lukas/Publication_Data_Dec_2019/Ligand Receptor EndMT/MILENA.filtered_EndMT_network_paths_weight1.5.csv", sep = ",", header = T)
+
+Lig <- filter(Lig, Source == "S:EndMT+")
+
+Lig.summed <- Lig %>% group_by(Ligand, Target) %>% summarize(summed_weight = sum(Weight))
+
+Lig.top <- filter(Lig, Ligand %in% c("Gnai2", "Col18a1", "Col4a1", "Fn1", "Serpine1", "Vcam1", "Pdgfb", "Pgf", "Vegfc", "Cxcl12", "Tgfb1", "Icam1", "Sema6d", "Hspg2", "B2m"))
+
+Lig.top$X <- NULL
+
+To.plot <- data.frame(Ligand = Lig.top$Ligand, Receptor = Lig.top$Receptor, Cell_from = Lig.top$Source, Cell_to = Lig.top$Target)
+
+group = c(as.character(To.plot$Cell_to), as.character(To.plot$Cell_from))
+
+names(group) = c(as.character(To.plot$Receptor), as.character(To.plot$Ligand))
+
+colo <- c(colorRampPalette(brewer.pal(9, "Greys"))(11)[3:11], colorRampPalette(brewer.pal(8, "Set1"))(15))
+
+To.plot$Ligand <- factor(To.plot$Ligand, levels = unique(To.plot$Ligand))
+
+To.plot <- To.plot %>% mutate(color_receptor = recode(colo[1:9], levels = colo[1:9])[Cell_to], color_ligand = recode(colo[10:24], levels = colo[10:24])[Ligand])
+
+co <- c(To.plot$color_receptor, To.plot$color_ligand)
+names(co) = c(as.character(To.plot$Receptor), as.character(To.plot$Ligand))
+
+circos.clear()
+chordDiagram(To.plot, directional = 1, small.gap = 1, big.gap = 5, group = group, diffHeight = mm_h(5), annotationTrack = "grid", preAllocateTracks = 1, grid.col = co)
+circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+  xlim = get.cell.meta.data("xlim")
+  ylim = get.cell.meta.data("ylim")
+  sector.name = get.cell.meta.data("sector.index")
+  circos.text(mean(xlim), ylim[1] + .1, sector.name, facing = "clockwise", niceFacing = TRUE, adj = c(0, 0.5))
+  circos.axis(h = "top", labels.cex = 0.5 , sector.index = sector.name, track.index = 2, labels = F)
+}, bg.border = NA)
+
+```
+
+# Supplement 14b
+
+```{r}
+Data = GFP
+'%!in%' <- function(x,y)!('%in%'(x,y))
+annos = c("Hom","d1","d3","d7","d14","d28")
+Data = SubsetData(Data, cells.use = WhichCells(Data, cells.use = which(Data@meta.data$orig.ident %!in% c("Tam-Control", "d48"))))
+
+Data <- SetAllIdent(Data, id= "orig.ident")
+
+Marker.GFP <- FindAllMarkers(Data, logfc.threshold = 0.2, test.use = "bimod", only.pos = T, return.thresh = 0.01)
+
+All.marker.p <- subset(Marker.GFP, avg_logFC > 0)
+
+list.GO <- list()
+for (i in annos){
+  X <- subset(All.marker.p, cluster == i)
+  GOI <- X$gene
+  results <- enrichr(GOI, databases = c("GO_Biological_Process_2018", "GO_Molecular_Function_2018"))
+  list.GO[[i]] <- results
+}
+All.GO <- NULL
+for(i in annos){
+  tab1 <- data.frame(list.GO[[i]][["GO_Biological_Process_2018"]], i)
+  tab2 <- data.frame(list.GO[[i]][["GO_Molecular_Function_2018"]], i)
+  
+  All.GO <- data.frame(rbind(All.GO, tab1, tab2))
+}
+
+Terms <-  c("positive regulation of inflammatory response (GO:0050729)",
+            "cellular response to hypoxia (GO:0071456)",
+            "negative regulation of programmed cell death (GO:0043069)",
+            "positive regulation of angiogenesis (GO:0045766)",
+            "positive regulation of cell proliferation (GO:0008284)",
+            "regulation of mitotic cell cycle phase transition (GO:1901990)",
+            "cellular response to nitric oxide (GO:0071732)",
+            "positive regulation of epithelial to mesenchymal transition (GO:0010718)",
+            "extracellular matrix disassembly (GO:0022617)", 
+            "extracellular matrix organization (GO:0030198)")
+            
+Annotation <- c(1,1,1,2,2,2,2,3,3,3)
+
+GO.plot.data <- All.GO %>% filter(Term %in% Terms) %>% group_by(Term) %>% complete(i, fill = list(rep(NA, 8)))
+val <- str_split(GO.plot.data$Overlap, "/")
+fraction = NULL
+for(i in 1:length(val)){
+  if(is.na(val[[i]])){
+    fraction[i] = NA
+  }
+  else {
+    fraction[i] <- as.numeric(val[[i]][1])/as.numeric(val[[i]][2])
+  }
+}
+GO.plot.data$Fraction <- fraction
+
+GO.plot.data$Term <- factor(GO.plot.data$Term, levels = unique(Terms))
+
+GO.hash <- hash::hash(Terms, Annotation)
+An <- NULL
+for(i in GO.plot.data$Term){
+  An <- c(An, GO.hash[[i]])
+}
+GO.plot.data$Annotation <- An
+
+ggplot(GO.plot.data, aes(x= i, y= Term, color = Combined.Score, size = fraction))+
+  geom_point()+
+  scale_color_gradient(low = "grey80", high = "red", name = "Enrichment Score")+
+  scale_size_continuous(breaks = c(0,0.1,0.15,0.2,0.25,0.3), range = c(1,10), name = "Specificity")+
+  theme(axis.text.x = element_text(angle = 90, face= "bold", vjust = 0.5))+
+  facet_wrap(Annotation~., scales = "free", nrow = 3)+
+  xlab("")+
+  ylab("")
+```
+
+# Supplement 19
+
+```{r}
+Data <- MILENA.filtered
+
+EndMT.counter_2 <- NULL
+A <- data.frame(Pecam1 = Data@data["Pecam1", ],
+                Cdh5 = Data@data["Cdh5", ], 
+                Fn1 = Data@data["Fn1", ],
+                Serpine1 = Data@data["Serpine1", ],
+                Cluster = Data@meta.data$res.0.6,
+                ColCell = colnames(Data@data))
+  
+  
+for (i in rownames(A)){
+  if(A[i,"Pecam1"] != 0 & A[i,"Cdh5"] != 0 & A[i,"Fn1"] != 0 & A[i,"Serpine1"] != 0){
+    EndMT.counter_2[i] = "EndMT+"
+  }
+  else if((A[i,"Pecam1"] != 0 & A[i,"Cdh5"] != 0) & A[i,"Fn1"] == 0){
+    EndMT.counter_2[i] = "EndMT-"
+  }
+  else if((A[i,"Pecam1"] != 0 & A[i,"Cdh5"] != 0) & A[i,"Serpine1"] == 0){
+    EndMT.counter_2[i] = "EndMT-"
+  }
+  else if (A[i, "Pecam1"] == 0 & A[i,"Cdh5"] == 0 & A[i,"Cluster"] %in% c(0,1,4,5)){
+    EndMT.counter_2[i] = "Fb"
+  }
+  else {EndMT.counter_2[i] = "other"}
+}
+
+Genes.plot <- c("Pdgfra", "Fn1", "Serpine1", "Col1a1", "Col1a2", "Tagln", "Cdh5", "Pecam1", "Tnc", "Mmp14", "Fabp4", "Kdr",
+                "Col18a1", "Ctla2a", "Plvap", "Zeb2", "Icam1", "Vcam1", "Pdgfb")
+
+Data <- AddMetaData(Data, EndMT.counter_2, "EndMT.counter_2")
+
+Data <- SetAllIdent(Data, id = "EndMT.counter_2")
+
+MILENA.filtered <- Data
+
+Data = SubsetData(Data, cells.use = WhichCells(Data, cells.use = which(Data@meta.data$EndMT.counter_2 != "other")))
+Data <- SetAllIdent(Data, id = "EndMT.counter_2")
+
+EndMT.Markers <- FindAllMarkers(Data, logfc.threshold = 0, test.use = "bimod", genes.use = Genes.plot, min.pct = 0)
+
+EndMT.Markers <- filter(EndMT.Markers, p_val_adj < 0.05)
+
+EndMT.Markers$p_val_adj <- ifelse(EndMT.Markers$p_val_adj == 0,1e-300, EndMT.Markers$p_val_adj)
+
+A <- data.frame(Group <- Data@meta.data$EndMT.counter_2)
+for (i in Genes.plot){
+  A <- data.frame(A, expm1(Data@data[i,]))
+}
+colnames(A)[-1] <- Genes.plot
+
+A.melt <- reshape2::melt(A)
+colnames(A.melt) <- c("Group", "Gene", "Expression")
+
+ggplot(A.melt, aes(x= Group, y= Expression, fill = Group))+
+  geom_violin(scale = "width")+
+  facet_wrap(~Gene, scales = "free")+
+  xlab("")+
+  scale_y_continuous(trans = "log1p", name = "log(expression)")+
+  theme(axis.text.x = element_blank())
+```
